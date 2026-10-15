@@ -1,3 +1,10 @@
+/** Backend origin. Empty = same origin (the Vite dev proxy locally); on Vercel, set VITE_API_URL
+ * to the Render service URL. */
+export const API_BASE = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/$/, "");
+export const apiUrl = (path: string) => `${API_BASE}${path}`;
+export const wsUrl = (path: string) =>
+  API_BASE ? `${API_BASE.replace(/^http/, "ws")}${path}` : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${path}`;
+
 export class ApiError extends Error {
   code: string;
   status: number;
@@ -11,13 +18,13 @@ export class ApiError extends Error {
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await fetch(apiUrl(path), {
       method,
       headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    throw new ApiError(0, "NETWORK", "Backend unreachable — is the API server running on :8000?");
+    throw new ApiError(0, "NETWORK", API_BASE ? `Backend unreachable at ${API_BASE}` : "Backend unreachable — is the API server running on :8000?");
   }
   if (!res.ok) {
     let code = "HTTP_" + res.status;

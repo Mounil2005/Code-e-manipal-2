@@ -167,7 +167,18 @@ export const useSim = create<SimState>((set, get) => ({
       } catch {
         /* storage unavailable */
       }
-      const maps = (await api.get<{ maps: MapListing[] }>("/api/maps")).maps;
+      let maps: MapListing[] = [];
+      for (let attempt = 0; ; attempt++) {
+        try {
+          maps = (await api.get<{ maps: MapListing[] }>("/api/maps")).maps;
+          break;
+        } catch (e) {
+          if (attempt >= 14) throw e; // ~75 s: enough for a sleeping Render instance to wake
+          if (attempt === 1) get().toast({ kind: "info", title: "Waking the server", body: "The backend was asleep; it usually takes under a minute." });
+          set({ conn: "connecting" });
+          await new Promise((r) => setTimeout(r, 5000));
+        }
+      }
       if (!maps.some((m) => m.id === preferred)) preferred = maps.find((m) => m.real)?.id ?? maps[0].id;
       set({ maps, mapId: preferred });
       await get().loadWorld(preferred);

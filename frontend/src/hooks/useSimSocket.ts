@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useSim } from "../store/sim";
+import { wsUrl } from "../lib/api";
 
 /** Live connection to the authoritative backend. Reconnects with backoff and asks
  * for a full resync whenever a message sequence gap is detected. */
@@ -17,8 +18,7 @@ export function useSimSocket(simId: string | undefined) {
 
     const connect = () => {
       setConn(retry.current === 0 ? "connecting" : "reconnecting");
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      ws = new WebSocket(`${proto}://${location.host}/ws/simulations/${simId}`);
+      ws = new WebSocket(wsUrl(`/ws/simulations/${simId}`));
       ws.onopen = () => {
         retry.current = 0;
         setConn("live");

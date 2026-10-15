@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, FileJson, Printer, RefreshCw } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api } from "../lib/api";
+import { api, apiUrl } from "../lib/api";
 import { useSim } from "../store/sim";
 import { Logo } from "../components/Shell";
 import { Badge, Button, cx, Empty, PageHeader, Panel, Segmented, Spinner, Stat } from "../components/ui";
@@ -62,7 +62,7 @@ export default function Reports() {
               <Button size="sm" icon={<FileJson className="size-3.5" />} disabled={!rep} onClick={downloadJson}>
                 JSON
               </Button>
-              <a href={`/api/reports/${sim.id}?format=pdf`} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-ink px-2.5 text-xs font-medium text-white hover:bg-ink-2">
+              <a href={apiUrl(`/api/reports/${sim.id}?format=pdf`)} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-ink px-2.5 text-xs font-medium text-white hover:bg-ink-2">
                 <Download className="size-3.5" />
                 PDF
               </a>

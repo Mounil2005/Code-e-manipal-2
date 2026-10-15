@@ -100,6 +100,15 @@ The camera flies to each failure. The run is seeded, so it ends the same way eve
 
 **Offline:** a service worker keeps every map tile and font the browser has loaded, so do one full rehearsal on wifi and the demo then works without a connection. It never bulk-downloads tiles, which the OpenStreetMap tile policy forbids. Views you have not opened before stay blank when offline. The backend runs locally and needs no internet.
 
+## Deploy (Vercel + Render)
+
+The backend runs simulations, the live feed and WebSockets, so it needs a long-running server (Render). The frontend is a static build (Vercel).
+
+1. **Render (backend).** New → Blueprint → this repo. `render.yaml` creates `resqnet-api` from `backend/`. Note the URL, e.g. `https://resqnet-api.onrender.com`, and check `/api/health`.
+2. **Vercel (frontend).** New Project → this repo, **Root Directory `frontend`**. Add the environment variable `VITE_API_URL` = the Render URL (no trailing slash), then deploy. `frontend/vercel.json` handles routing for the app's pages.
+
+On Render's free plan the backend sleeps after about 15 idle minutes. The first visit then waits up to a minute while it wakes; the app retries and says so. Open the site once before a demo. Simulations live in memory, so a restart or wake-up starts fresh.
+
 ## Pages
 
 | Route | Page |
