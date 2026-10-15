@@ -200,6 +200,9 @@ export interface Frame {
   river_level: number;
   flood_real_time?: string | null;
   flood_discharge?: number | null;
+  approval_mode?: boolean;
+  recommendations?: Recommendation[];
+  operator?: { approvals: number; rejections: number; overrides: number; mean_latency: number | null };
   flood_offset: number;
   resources: Resource[];
   incidents: Incident[];
@@ -327,4 +330,90 @@ export interface SimSummary {
   flood_event?: FloodEvent | null;
   config: ScenarioConfig;
   injected: { tick: number; seq: number; type: string; params: Record<string, unknown>; source: string }[];
+}
+
+// ---------------------------------------------------------------- live feed
+export interface FeedDelta {
+  since_tick: number;
+  minutes: number;
+  roads_closed: string[];
+  roads_closed_count: number;
+  roads_reopened_count: number;
+  boat_streets_opened: number;
+  rerouted: { assignment: string; resource: string; incident: string; old_km: number | null; new_km: number | null }[];
+  new_assignments: { assignment: string; resource: string; incident: string; shelter: string; people: number; decision_id: string; why: string }[];
+  cancelled: { assignment: string; resource: string; incident: string; reason: string }[];
+  reassigned: { incident: string; from: string; to: string }[];
+  camps: { shelter: string; name: string; occupancy: number; occ_delta: number; reserved: number; reserved_delta: number; capacity: number; full: boolean }[];
+  supplies: { people_in_camps: number; new_arrivals: number; water_l_per_day: number; ration_kits_per_day: number; added_water_l_per_day: number; added_kits_per_day: number; standard: string };
+  rescued: number;
+  new_incidents: number;
+}
+export interface FeedMessage {
+  seq: number;
+  received_at: number;
+  tick: number;
+  type: "gauge" | "sos" | "duplicate" | "contradiction" | "road" | "shelter" | "dam";
+  source: "live" | "drill" | "synthetic" | "external";
+  label: string;
+  time: string | null;
+  payload: Record<string, any>;
+  event_id: string;
+  effects: string[];
+  delta: FeedDelta | null;
+}
+export interface FeedStatus {
+  mode: "live" | "drill" | "synthetic" | null;
+  running: boolean;
+  params: Record<string, any>;
+  note: string;
+  count: number;
+  current_delta: FeedDelta | null;
+  gauge: { tick: number; level_m: number; ramp: number; time: string | null; station: string | null; source: string } | null;
+}
+export interface PriorityRow {
+  rank: number;
+  incident: string;
+  node: string;
+  neighbourhood: string;
+  people: number;
+  unassigned: number;
+  urgency: number;
+  deadline_in: number;
+  confidence: number;
+  status: string;
+  eligibility: string;
+  reports: number;
+  sources: string[];
+  contradicted: boolean;
+  state: "assigned" | "waiting" | "partly assigned";
+  why_waiting: string;
+  assigned: { resource: string; shelter: string; people: number; phase: string; eta_min: number; decision_id: string }[];
+  cost: { T: number; R: number; U: number; F: number; penalty: number } | null;
+  decision_id: string | null;
+}
+export interface LiveCwc {
+  available: boolean;
+  reason?: string;
+  stale?: boolean;
+  source?: string;
+  gauge?: { code: string; name: string; river: string; level_m: number | null; time: string | null; history: [string, number][]; rain_mm_24h: number; ramp: number | null } | null;
+  dams?: { code: string; name: string; outflow_m3s: number | null; inflow_m3s: number | null; level_m: number | null; time: string | null; outflow_history: [string, number][] }[];
+}
+
+export interface Recommendation {
+  id: string;
+  tick: number;
+  age: number;
+  resource: string;
+  incident: string;
+  people: number;
+  shelter: string | null;
+  eta_pickup: number;
+  eta_total: number;
+  cost: number;
+  components: { T: number; R: number; U: number; F: number; penalty?: number };
+  decision_id: string;
+  alternatives: { resource: string; cost: number | null }[];
+  why: string;
 }

@@ -306,6 +306,9 @@ class WorldState:
     meta: dict[str, Any] = field(default_factory=dict)
     # real flood event: normalised river discharge (0..1) per tick; None -> synthetic ramp
     flood_curve: Optional[list[float]] = None
+    # live feed: river ramp (0..1) set by the latest gauge reading; overrides curve and synthetic ramp
+    river_override: Optional[float] = None
+    gauge_log: list[dict[str, Any]] = field(default_factory=list)
 
     def next_id(self, prefix: str) -> str:
         n = self.counters.get(prefix, 0) + 1

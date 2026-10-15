@@ -24,6 +24,8 @@ from ..persistence import store
 from ..routing.router import believed_closed
 from ..simulation.engine import EVENT_TYPES, Engine, EventError
 from ..simulation.scenarios import POLICIES, PRESETS, STRATEGIES, ScenarioConfig, get_preset
+from ..live import cwc as cwc_mod
+from ..live.feed import FeedError, FeedHub, drill_plan, live_reading, priority_board, synthetic_messages, synthetic_plan
 from ..simulation.maps import available_maps, is_known
 from ..simulation.serialize import static_world
 from ..simulation.state import ResourceStatus
@@ -61,6 +63,8 @@ class Session:
         self._audit_sent = 0
         self._round_sent = 0
         self.created = time.time()
+        self.feed = FeedHub()
+        self.feed_task: Optional[asyncio.Task] = None
 
     def summary(self) -> dict[str, Any]:
         e = self.engine
@@ -106,6 +110,8 @@ class Session:
             "frame": e.last_frame(),
             "audit": [_audit_dict(a) for a in audit[-200:]],
             "rounds": [r.to_dict(with_messages=False) for r in rounds[-50:]],
+            "feed": self.feed.unsent(),
+            "feed_status": self.feed.status(e),
         }
 
     def full_message(self, kind: str) -> dict[str, Any]:
@@ -123,6 +129,8 @@ class Session:
             "summary": self.summary(),
             "audit": [_audit_dict(a) for a in e.audit_log[-200:]],
             "rounds": [r.to_dict(with_messages=False) for r in e.rounds[-40:]],
+            "feed": self.feed.messages[-120:],
+            "feed_status": self.feed.status(e),
             "full": True,
         }
 
@@ -158,6 +166,79 @@ class Session:
             pass
 
 
+async def run_feed(s: Session, mode: str, p: dict[str, Any]) -> None:
+    """Background feed: replays the 2018 gauge record, a synthetic flood, or polls CWC live, and
+    pushes every message through the one door (FeedHub.apply)."""
+    import random
+
+    hub, e = s.feed, s.engine
+    rng = random.Random(e.cfg.seed * 1009 + 7)
+    interval = max(0.5, min(30.0, float(p.get("interval_s", 3.0))))
+    src = {"drill": "drill", "synthetic": "synthetic", "live": "live"}[mode]
+
+    def push(msg: dict[str, Any]) -> None:
+        try:
+            hub.apply(e, msg)
+        except (FeedError, EventError):
+            pass  # a stale target (e.g. a road already closed) is skipped, never fatal
+
+    try:
+        if mode == "live":
+            last = None
+            hub.status_note = "polling CWC every 60 s (stations update hourly)"
+            while hub.running and not e.finished:
+                r = await asyncio.to_thread(live_reading, e.world.map_id)
+                if r is None:
+                    hub.status_note = "CWC unreachable; holding the last reading"
+                elif r["time"] != last:
+                    last = r["time"]
+                    push({"type": "gauge", "source": "live", "level_m": r["level_m"], "station": r["station"], "time": r["time"], "label": "stale" if r.get("stale") else ""})
+                    for d in r.get("dams", []):
+                        if d.get("outflow_m3s") is not None:
+                            push({"type": "dam", "source": "live", "dam": d["name"], "outflow_m3s": d["outflow_m3s"], "time": d.get("time")})
+                    hub.status_note = f"live: {r['station']} {r['level_m']} m at {r['time']}"
+                if p.get("synthetic_sos"):
+                    ramp = e.world.river_override or 0.0
+                    for m in synthetic_messages(e, rng, ramp, 1.0, p, "synthetic"):
+                        push(m)
+                await s.broadcast("feed")
+                for _ in range(int(max(5, float(p.get("poll_s", 60))))):
+                    if not hub.running:
+                        break
+                    await asyncio.sleep(1)
+        else:
+            plan = drill_plan(e.world.map_id) if mode == "drill" else synthetic_plan(e.world.map_id, p)
+            hub.status_note = f"{len(plan)} hourly readings, one every {interval:g} s"
+            last_level = None
+            for i, row in enumerate(plan):
+                if not hub.running or e.finished:
+                    break
+                msg = {"type": "gauge", "source": src, "level_m": row["level_m"], "station": row["station"], "time": row["time"]}
+                if "ramp" in row:
+                    msg["ramp"] = row["ramp"]
+                push(msg)
+                last_level = row["level_m"]
+                ramp = e.world.river_override or 0.0
+                extra = synthetic_messages(e, rng, ramp, row.get("rain_factor", 1.0), p, "synthetic")
+                gap = interval / (len(extra) + 1)
+                await s.broadcast("feed")
+                for m in extra:
+                    await asyncio.sleep(gap)
+                    if not hub.running:
+                        break
+                    push(m)
+                    await s.broadcast("feed")
+                await asyncio.sleep(gap)
+                hub.status_note = f"reading {i + 1}/{len(plan)}: {row['station']} {row['level_m']} m ({row['time']})"
+            if mode == "drill" and hub.running and e.world.map_id == "kerala_chengannur":
+                hub.status_note = f"gauge went silent at the 2018 peak ({last_level} m, 16 Aug 08:00); holding the last reading"
+            elif hub.running:
+                hub.status_note = "feed complete"
+    finally:
+        hub.running = False
+        await s.broadcast("feed")
+
+
 SESSIONS: dict[str, Session] = {}
 JOBS: dict[str, dict[str, Any]] = {}
 
@@ -189,6 +270,12 @@ class CreateSimulation(BaseModel):
     seed: Optional[int] = None
     overrides: dict[str, Any] = Field(default_factory=dict)
     map: Optional[str] = None  # map source id; see GET /api/maps
+
+
+class FeedStartIn(BaseModel):
+    mode: str = "drill"  # drill | synthetic | live
+    params: dict[str, Any] = Field(default_factory=dict)
+    speed: Optional[float] = None
 
 
 class EventIn(BaseModel):
@@ -248,7 +335,7 @@ def make_config(scenario: str, seed: Optional[int], overrides: dict[str, Any]) -
         raise err(400, "BAD_MAP", f"unknown map '{ov['map']}'")
     cfg = get_preset(scenario, **ov)
     checks = [
-        (1 <= cfg.duration <= 600, "duration must be 1..600"),
+        (1 <= cfg.duration <= 1440, "duration must be 1..1440"),
         (0.2 <= cfg.flood_severity <= 2.5, "flood_severity must be 0.2..2.5"),
         (0 <= cfg.boats <= 7, "boats must be 0..7"),
         (0 <= cfg.ground_units <= 6, "ground_units must be 0..6"),
@@ -371,6 +458,10 @@ async def reset(sim_id: str) -> dict[str, Any]:
     s = get_session(sim_id)
     if s.task:
         s.task.cancel()
+    s.feed.running = False
+    if s.feed_task:
+        s.feed_task.cancel()
+    s.feed = FeedHub()
     s.engine = Engine(copy.deepcopy(s.cfg), s.strategy)
     s.status = "ready"
     s._audit_sent = 0
@@ -388,6 +479,79 @@ async def set_speed(sim_id: str, body: SpeedIn) -> dict[str, Any]:
     s.speed = body.speed
     await s.broadcast("status")
     return s.summary()
+
+
+# ================================================================ live feed
+@app.get("/api/live/cwc")
+async def live_cwc(map: str = "kerala_aluva") -> dict[str, Any]:
+    if map not in cwc_mod.STATIONS:
+        return {"available": False, "reason": f"no CWC station configured for {map}"}
+    return await asyncio.to_thread(cwc_mod.latest, map)
+
+
+@app.post("/api/simulations/{sim_id}/feed")
+async def feed_message(sim_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """The one door for real-time data: gauge readings, SOS, duplicate / contradictory reports,
+    road reports, camp updates, dam releases. External senders use this too."""
+    s = get_session(sim_id)
+    try:
+        rec = s.feed.apply(s.engine, {**body, "source": body.get("source") or "external"})
+    except FeedError as exc:
+        raise err(400, "BAD_FEED", str(exc))
+    except EventError as exc:
+        raise err(422, "FEED_REJECTED", str(exc))
+    await s.broadcast("feed")
+    return {"message": rec, "frame": s.engine.last_frame()}
+
+
+@app.get("/api/simulations/{sim_id}/feed")
+def feed_log(sim_id: str) -> dict[str, Any]:
+    s = get_session(sim_id)
+    return {"status": s.feed.status(s.engine), "messages": s.feed.messages[-200:]}
+
+
+@app.post("/api/simulations/{sim_id}/feed/start")
+async def feed_start(sim_id: str, body: FeedStartIn) -> dict[str, Any]:
+    s = get_session(sim_id)
+    if body.mode not in ("drill", "synthetic", "live"):
+        raise err(400, "BAD_MODE", "mode must be drill|synthetic|live")
+    if s.engine.finished:
+        raise err(409, "FINISHED", "simulation has finished; start a new one")
+    if s.feed.running:
+        s.feed.running = False
+        if s.feed_task:
+            s.feed_task.cancel()
+    if body.mode == "drill":
+        try:
+            drill_plan(s.engine.world.map_id)
+        except FeedError as exc:
+            raise err(400, "NO_DRILL", str(exc))
+    s.feed.mode, s.feed.params, s.feed.running = body.mode, dict(body.params), True
+    if body.speed:
+        s.speed = max(0.5, min(16.0, float(body.speed)))
+    if s.status != "running":
+        s.status = "running"
+        s.task = asyncio.create_task(s.run_loop())
+    s.feed_task = asyncio.create_task(run_feed(s, body.mode, dict(body.params)))
+    await s.broadcast("feed")
+    return {**s.summary(), "feed_status": s.feed.status(s.engine)}
+
+
+@app.post("/api/simulations/{sim_id}/feed/stop")
+async def feed_stop(sim_id: str) -> dict[str, Any]:
+    s = get_session(sim_id)
+    s.feed.running = False
+    if s.feed_task:
+        s.feed_task.cancel()
+    s.feed.status_note = "feed stopped"
+    await s.broadcast("feed")
+    return {"feed_status": s.feed.status(s.engine)}
+
+
+@app.get("/api/simulations/{sim_id}/priority")
+def priority(sim_id: str) -> dict[str, Any]:
+    s = get_session(sim_id)
+    return {"tick": s.engine.world.tick, "board": priority_board(s.engine)}
 
 
 @app.post("/api/simulations/{sim_id}/events")
@@ -585,6 +749,54 @@ def _start_job(kind: str, request: dict[str, Any], fn: Any) -> dict[str, Any]:
 
     asyncio.get_running_loop().create_task(runner())
     return job
+
+
+class ParetoIn(BaseModel):
+    scenario: str = "kerala_2018"
+    map: Optional[str] = None
+    seeds: list[int] = Field(default_factory=lambda: [1, 2, 3])
+    strategy: str = "decentralized"
+
+
+@app.post("/api/pareto")
+async def create_pareto(body: ParetoIn) -> dict[str, Any]:
+    from ..analysis.runs import pareto as pareto_fn
+
+    if body.strategy not in STRATEGIES or not (1 <= len(body.seeds) <= 6):
+        raise err(400, "BAD_REQUEST", "strategy must be valid and seeds 1..6")
+    cfg = make_config(body.scenario, None, {"map": body.map} if body.map else {})
+    return _start_job("pareto", body.model_dump(), lambda prog: pareto_fn(cfg, list(body.seeds), body.strategy, prog))
+
+
+@app.get("/api/pareto/{job_id}")
+def get_pareto(job_id: str) -> dict[str, Any]:
+    return get_benchmark(job_id)
+
+
+@app.get("/api/evidence")
+def evidence(map: str = "kerala_aluva") -> dict[str, Any]:
+    """Observed Sentinel-1 water for 2018, the model's flood at that pass, and the dataset catalogue."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from ..live.catalog import DATASETS, FEEDBACK
+    from ..simulation.flood import update_flood
+    from ..simulation.serialize import frame as frame_fn
+
+    if not is_known(map):
+        raise err(400, "BAD_MAP", f"unknown map '{map}'")
+    out: dict[str, Any] = {"datasets": DATASETS, "feedback": FEEDBACK, "s1": None, "model_frame": None}
+    path = _Path(__file__).resolve().parent.parent / "data" / "events" / f"s1_2018__{map}.json"
+    if path.exists():
+        s1 = _json.loads(path.read_text(encoding="utf-8"))
+        out["s1"] = s1
+        eng = Engine(get_preset("kerala_2018", map=map), record_frames=False)
+        eng.world.river_override = float(s1["validation"].get("ramp_c") or 0.0)
+        update_flood(eng.world, eng.cfg.flood_severity, eng.cfg.flood_peak_tick)
+        f = frame_fn(eng)
+        f["incidents"], f["resources"] = [], []
+        out["model_frame"] = f
+    return out
 
 
 @app.post("/api/benchmarks")

@@ -8,6 +8,7 @@ import type { Strategy } from "../types";
 
 const NAV = [
   { to: "/judge", label: "Judge Mode" },
+  { to: "/live", label: "Live ops" },
   { to: "/command", label: "Command" },
   { to: "/dispatch", label: "Fleet" },
   { to: "/agents", label: "Negotiation" },
@@ -17,6 +18,7 @@ const NAV = [
   { to: "/replay", label: "Replay" },
   { to: "/safety", label: "Safety" },
   { to: "/reports", label: "Report" },
+  { to: "/data", label: "Data & evidence" },
 ];
 
 export function Logo() {

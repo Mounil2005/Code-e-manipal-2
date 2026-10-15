@@ -230,6 +230,7 @@ def build_world(cfg: ScenarioConfig, strategy: str) -> WorldState:
         meta = {**meta, "flood_event": {k: v for k, v in event.items() if k not in ("curve", "rain")}}
     return WorldState(
         flood_curve=event["curve"] if event else None,
+        river_override=0.0 if cfg.river_source == "feed" else None,
         tick=0,
         seed=cfg.seed,
         scenario=cfg.key,

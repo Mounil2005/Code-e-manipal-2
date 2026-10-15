@@ -26,6 +26,8 @@ def ramp(tick: int, peak_tick: int) -> float:
 def current_ramp(world: WorldState, peak_tick: int) -> float:
     """0.35..1.0: the replayed discharge curve when the run carries a real event, else the
     synthetic linear rise."""
+    if world.river_override is not None:
+        return 0.35 + 0.65 * world.river_override
     c = world.flood_curve
     if c:
         return 0.35 + 0.65 * c[min(max(world.tick, 0), len(c) - 1)]

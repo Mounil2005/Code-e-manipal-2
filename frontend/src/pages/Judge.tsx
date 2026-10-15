@@ -76,7 +76,7 @@ const CHAPTERS: Chapter[] = [
     narrate: ({ frame }) => (
       <>
         <b>{frame.metrics.people_rescued}</b> people rescued, <b>{frame.metrics.unmet_people}</b> still waiting, mean time to service <b>{frame.metrics.mean_time_to_service ?? "—"} min</b>, {frame.metrics.deadline_misses} urgent deadlines missed and <b>{frame.metrics.route_violations + frame.metrics.invariant_violations}</b> safety violations ({frame.metrics.safety_rejections} unsafe commits blocked by the shield).{" "}
-        Try a different future in the <Link className="underline" to="/decision-lab">Decision Lab</Link>, or export the <Link className="underline" to="/reports">after-action report</Link>.
+        Now see it run on a real-time feed in <Link className="font-semibold underline" to="/live">Live ops</Link>, try a different future in the <Link className="underline" to="/decision-lab">Decision Lab</Link>, or read <Link className="underline" to="/data">what data we used and why</Link>.
       </>
     ),
   },

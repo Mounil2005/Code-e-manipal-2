@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, ApiError } from "../lib/api";
-import type { AuditRecord, Frame, MapListing, RoundSummary, SimSummary, StaticWorld, Strategy } from "../types";
+import type { AuditRecord, FeedMessage, FeedStatus, Frame, MapListing, RoundSummary, SimSummary, StaticWorld, Strategy } from "../types";
 
 export type Selection = { type: "incident" | "resource" | "shelter" | "edge"; id: string } | null;
 /** Where the map camera should go: one point (fly to) or several (fit them). `key` re-triggers. */
@@ -28,6 +28,7 @@ export interface Layers {
   shelters: boolean;
   uncertain: boolean;
   labels: boolean;
+  satellite: boolean;
 }
 
 interface SimState {
@@ -48,6 +49,8 @@ interface SimState {
   focus: Focus;
   setFocus: (f: Omit<NonNullable<Focus>, "key"> | null) => void;
   lastEvent: LastEvent | null;
+  feed: FeedMessage[];
+  feedStatus: FeedStatus | null;
   lastSeq: number;
   busy: Record<string, boolean>;
   setSelection: (s: Selection) => void;
@@ -133,11 +136,13 @@ export const useSim = create<SimState>((set, get) => ({
   rounds: [],
   selection: null,
   decisionId: null,
-  layers: { roads: true, water: true, flood: true, closures: true, routes: true, incidents: true, units: true, shelters: true, uncertain: true, labels: false },
+  layers: { roads: true, water: true, flood: true, closures: true, routes: true, incidents: true, units: true, shelters: true, uncertain: true, labels: false, satellite: false },
   toasts: [],
   focus: null,
   setFocus: (f) => set({ focus: f ? { ...f, key: focusSeq++ } : null }),
   lastEvent: null,
+  feed: [],
+  feedStatus: null,
   lastSeq: 0,
   busy: {},
   setSelection: (selection) => set({ selection }),
@@ -198,7 +203,7 @@ export const useSim = create<SimState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      set({ world, mapId: sim.map ?? get().mapId, sim, frame, audit: [], rounds: [], selection: null, decisionId: null, lastSeq: 0, lastEvent: null, focus: { points: [], fit: true, key: focusSeq++ } });
+      set({ world, mapId: sim.map ?? get().mapId, sim, frame, audit: [], rounds: [], selection: null, decisionId: null, lastSeq: 0, lastEvent: null, feed: [], feedStatus: null, focus: { points: [], fit: true, key: focusSeq++ } });
     } catch (e) {
       get().toast({ kind: "crit", title: "Could not create simulation", body: (e as Error).message });
       throw e;
@@ -215,7 +220,7 @@ export const useSim = create<SimState>((set, get) => ({
     } catch {
       /* ignore */
     }
-    set({ world, sim, frame, audit: [], rounds: [], selection: null, lastSeq: 0 });
+    set({ world, sim, frame, audit: [], rounds: [], selection: null, lastSeq: 0, feed: [], feedStatus: null });
   },
   control: async (action, ticks = 1) => {
     const sim = get().sim;
@@ -269,7 +274,16 @@ export const useSim = create<SimState>((set, get) => ({
       };
       const audit = full ? msg.audit : msg.type === "reset" ? [] : merge(s.audit, msg.audit, 800);
       const rounds = full ? msg.rounds : msg.type === "reset" ? [] : merge(s.rounds, msg.rounds, 300);
+      let feed = s.feed;
+      if (full || msg.type === "reset") feed = (msg.feed as FeedMessage[]) ?? [];
+      else if (msg.feed?.length) {
+        const bySeq = new Map(s.feed.map((m) => [m.seq, m]));
+        for (const m of msg.feed as FeedMessage[]) bySeq.set(m.seq, m);
+        feed = [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-400);
+      }
       return {
+        feed,
+        feedStatus: msg.feed_status ?? s.feedStatus,
         frame: msg.frame ?? s.frame,
         ...(msg.frame && msg.type !== "reset" && !full ? focusFor(s, msg.frame) : {}),
         sim: { ...s.sim!, status: msg.status, speed: msg.speed, tick: msg.frame?.tick ?? s.sim!.tick, version: msg.state_version, ...(msg.summary ?? {}) },

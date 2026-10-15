@@ -23,6 +23,8 @@ class ScenarioConfig:
     map: str = "riverbend"  # map source id (see simulation/maps.py)
     flood_event: str = ""  # real flood event id replayed as the river level (see simulation/events.py)
     extra_shelters: bool = True  # maps with more than three shelters open S4+ at their indicative capacity
+    river_source: str = "model"  # "model" (scenario ramp / replayed event) or "feed" (live gauge readings)
+    approval_mode: bool = False  # True: the agents only recommend dispatches; an operator approves each one
     seed: int = 7
     duration: int = 180  # ticks; 1 tick = 1 simulated minute
     flood_severity: float = 1.0
@@ -74,6 +76,20 @@ PRESETS: dict[str, ScenarioConfig] = {
         name="Coordinator Outage",
         description="Central dispatch fails at t=15 for 60 minutes. Existing missions continue; peer communication and local safety remain available. No standby coordinator is modelled.",
         schedule=[{"tick": 15, "type": "COORDINATOR_OUTAGE", "params": {"duration": 60}}],
+    ),
+    "live_ops": _preset(
+        key="live_ops",
+        name="Live operations",
+        description="River level comes from the live feed (CWC gauge, the 2018 drill or a synthetic flood) and SOS calls arrive through the feed. Starts calm.",
+        river_source="feed",
+        approval_mode=True,
+        duration=1440,
+        boats=7,
+        initial_incidents=4,
+        arrival_incidents=0,
+        report_noise=0.0,
+        duplicate_rate=0.0,
+        delayed_report_rate=0.0,
     ),
     "kerala_2018": _preset(
         key="kerala_2018",

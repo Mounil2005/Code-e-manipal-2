@@ -61,6 +61,12 @@ from .state import (
 from .world import build_world, generate_reports
 
 EVENT_TYPES = (
+    "APPROVE_RECOMMENDATION",
+    "REJECT_RECOMMENDATION",
+    "SET_APPROVAL_MODE",
+    "GAUGE_READING",
+    "DAM_RELEASE",
+    "REPORT_DUPLICATE",
     "CLOSE_EDGE",
     "OPEN_EDGE",
     "RESOURCE_FAILURE",
@@ -118,9 +124,17 @@ class Engine:
             "invariant_violations": 0,
             "stale_rejections": 0,
         }
+        # approval mode: AI recommendations awaiting an operator, and pairs the operator rejected
+        self.recommendations: dict[str, dict[str, Any]] = {}
+        self.rejected_pairs: dict[tuple[str, str], int] = {}
+        self.approval_latency: list[int] = []
+        self.counters["approvals"] = 0
+        self.counters["operator_rejections"] = 0
+        self.counters["operator_overrides"] = 0
         self.needs_reassign: set[str] = set()
         self._last_outcome: dict[str, str] = {}
         self._round_seq = 0
+        self._decision_seq = 0
         self._event_seq = 0
         self.finished = False
         self.listeners: list[Callable[[str, Any], None]] = []
@@ -481,7 +495,7 @@ class Engine:
             "event",
             f"{type_} ({source}): " + ("; ".join(ev.effects) or "no effect"),
             {"event": ev.id, **{k: v for k, v in params.items() if isinstance(v, (str, int, float))}},
-            "critical" if type_ in ("RESOURCE_FAILURE", "TRIPLE_FAILURE", "CLOSE_EDGE", "SHELTER_CAPACITY") else "warn",
+            "critical" if type_ in ("RESOURCE_FAILURE", "TRIPLE_FAILURE", "CLOSE_EDGE", "SHELTER_CAPACITY") else "info" if type_ in ("GAUGE_READING", "DAM_RELEASE", "REPORT_DUPLICATE") else "warn",
         )
         for fn in self.listeners:
             fn("event", ev)
@@ -639,6 +653,137 @@ class Engine:
         snapshot_traversability(w)
         closed = sorted(before - {e.id for e in w.edges.values() if e.ground_ok})
         ev.effects.append(f"water level {'+' if delta >= 0 else ''}{delta:.1f} m; {len(closed)} road segments newly impassable for ground units")
+
+    # ---------------------------------------------------------------- human in the loop
+    def recommend(self, cand: Any, rnd: Any, decision: dict[str, Any]) -> None:
+        """Approval mode: keep the agents' choice as a recommendation (one per unit and per
+        incident) instead of committing it. Nothing is reserved or dispatched until approval."""
+        w = self.world
+        pair = (cand.resource_id, cand.incident_id)
+        if self.rejected_pairs.get(pair, -1) >= w.tick:
+            decision["outcome"] = "OPERATOR_REJECTED"
+            return None
+        if decision.get("recommendation_id"):
+            # a later matching pass offered this incident another unit: the record keeps the one recommended
+            decision["selected"] = decision["recommended"]
+            return None
+        decision["outcome"] = "RECOMMENDED"
+        if any(r["resource"] == cand.resource_id or r["incident"] == cand.incident_id for r in self.recommendations.values()):
+            return None
+        if cand.shelter_options:
+            decision["shelter"] = cand.shelter_options[0][0]
+        rid = w.next_id("REC")
+        feasible = [c for c in decision.get("candidates", []) if c.get("feasible") and c.get("resource_id") != cand.resource_id]
+        self.recommendations[rid] = {
+            "id": rid,
+            "tick": w.tick,
+            "resource": cand.resource_id,
+            "incident": cand.incident_id,
+            "people": cand.people,
+            "shelter": cand.shelter_options[0][0] if cand.shelter_options else None,
+            "eta_pickup": round(cand.eta_pickup, 1),
+            "eta_total": round(cand.eta_dropoff, 1),
+            "cost": round(cand.cost, 3),
+            "components": {k: round(v, 3) for k, v in cand.components.items()},
+            "decision_id": decision["id"],
+            "round": rnd.id,
+            "alternatives": [{"resource": c["resource_id"], "cost": c.get("cost")} for c in feasible[:4]],
+        }
+        decision["recommendation_id"] = rid
+        decision["recommended"] = cand.to_dict()
+        decision["selected"] = decision["recommended"]
+        rnd.msg("RECOMMEND", "coordination", cand.resource_id, cand.incident_id, recommendation=rid)
+        self.audit("assignment", f"AI recommends {cand.resource_id} → {cand.incident_id} ({cand.people} people); awaiting operator", {"recommendation": rid, "resource": cand.resource_id, "incident": cand.incident_id, "decision": decision["id"]}, "info")
+        return None
+
+    def _prune_recommendations(self) -> None:
+        w = self.world
+        for rid, rec in list(self.recommendations.items()):
+            r = w.resources.get(rec["resource"])
+            inc = w.incidents.get(rec["incident"])
+            unit_gone = not r or r.status != ResourceStatus.IDLE or r.assignment_id or r.load or r.blackout_until >= w.tick
+            need_gone = not inc or inc.status in (IncidentStatus.RESCUED, IncidentStatus.FALSE_ALARM) or common.unassigned_people(w, inc) <= 0
+            if unit_gone or need_gone or w.tick - rec["tick"] > 30 or not self.cfg.approval_mode:
+                del self.recommendations[rid]
+        for pair, until in list(self.rejected_pairs.items()):
+            if until < w.tick:
+                del self.rejected_pairs[pair]
+
+    def _ev_approve_recommendation(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        rec = self.recommendations.get(p.get("recommendation_id") or "")
+        if rec is None:
+            raise EventError("recommendation not found or no longer valid")
+        res_id = p.get("resource_id") or rec["resource"]
+        self._ev_manual_assign(ev, {"resource_id": res_id, "incident_id": rec["incident"]})  # fresh evaluation + safety shield
+        self.recommendations.pop(rec["id"], None)
+        self.counters["approvals"] += 1
+        self.approval_latency.append(self.world.tick - rec["tick"])
+        if res_id != rec["resource"]:
+            self.counters["operator_overrides"] += 1
+            ev.effects.append(f"operator chose {res_id} instead of the recommended {rec['resource']}")
+        ev.effects.append(f"operator approved {rec['id']} after {self.world.tick - rec['tick']} min")
+
+    def _ev_reject_recommendation(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        rec = self.recommendations.pop(p.get("recommendation_id") or "", None)
+        if rec is None:
+            raise EventError("recommendation not found or no longer valid")
+        self.rejected_pairs[(rec["resource"], rec["incident"])] = self.world.tick + 20
+        self.counters["operator_rejections"] += 1
+        ev.effects.append(f"operator rejected {rec['resource']} → {rec['incident']} ({p.get('reason') or 'no reason given'}); the agents will propose another option")
+
+    def _ev_set_approval_mode(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        on = bool(p.get("enabled"))
+        self.cfg.approval_mode = on
+        if not on:
+            self.recommendations.clear()
+        ev.effects.append("operator approves every dispatch; agents recommend" if on else "autonomous: agents commit dispatches themselves")
+
+    def _ev_gauge_reading(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        """A river gauge reading from the feed. Sets the river ramp (0 = calm, 1 = the 2018 peak at
+        that gauge) and recomputes depths and traversability immediately."""
+        from ..live.cwc import ramp_for_level
+
+        w = self.world
+        try:
+            level = float(p["level_m"])
+        except (KeyError, TypeError, ValueError):
+            raise EventError("level_m (number) is required")
+        if not (-5 <= level <= 60):
+            raise EventError("level_m out of range")
+        before_ground = {e.id for e in w.edges.values() if e.ground_ok}
+        before_boat = {e.id for e in w.edges.values() if e.boat_ok and e.kind == EdgeKind.ROAD}
+        ramp = ramp_for_level(w.map_id, level) if "ramp" not in p else max(0.0, min(1.0, float(p["ramp"])))
+        prev = w.river_override
+        w.river_override = ramp
+        update_flood(w, self.cfg.flood_severity, self.cfg.flood_peak_tick)
+        snapshot_traversability(w)
+        closed = sorted(before_ground - {e.id for e in w.edges.values() if e.ground_ok})
+        reopened = sorted({e.id for e in w.edges.values() if e.ground_ok} - before_ground)
+        boat = sorted({e.id for e in w.edges.values() if e.boat_ok and e.kind == EdgeKind.ROAD} - before_boat)
+        w.gauge_log.append({"tick": w.tick, "level_m": level, "ramp": round(ramp, 3), "time": p.get("time"), "station": p.get("station"), "source": p.get("source", "feed")})
+        trend = "" if prev is None else (" rising" if ramp > prev + 1e-6 else " falling" if ramp < prev - 1e-6 else " steady")
+        ev.effects.append(f"{p.get('station') or 'gauge'} {level:.2f} m{trend}: {len(closed)} road segments newly impassable, {len(reopened)} reopened, {len(boat)} streets now boat-navigable")
+
+    def _ev_dam_release(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        """An upstream reservoir report. Recorded and broadcast as an early warning; the river
+        itself only changes through gauge readings."""
+        try:
+            q = float(p["outflow_m3s"])
+        except (KeyError, TypeError, ValueError):
+            raise EventError("outflow_m3s (number) is required")
+        ev.effects.append(f"{p.get('dam') or 'reservoir'} outflow {q:.0f} m3/s: downstream rise expected")
+
+    def _ev_report_duplicate(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
+        """A second call about an incident already known (same people, another source)."""
+        w = self.world
+        inc = self._need(p, "incident_id", w.incidents, "incident")
+        source = p.get("source") or "resident"
+        if source not in RELIABILITY:
+            raise EventError("source must be resident|sensor|responder")
+        tid = inc.truth_ids[0] if inc.truth_ids else ""
+        rep = IncidentReport(w.next_id("RPT"), w.tick, source, RELIABILITY[source], inc.node, inc.people_estimate, inc.urgency, "PRESENT", 0.0, tid, note="duplicate report")
+        report_mod.ingest(self, rep)
+        ev.effects.append(f"duplicate {source} report on {inc.id} merged: confidence {inc.confidence:.2f}, status {inc.status}")
 
     def _ev_comm_blackout(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
         r: RescueResource = self._need(p, "resource_id", self.world.resources, "resource")
@@ -823,7 +968,8 @@ class Engine:
         self._ingest_reports()
         # 5. reservation maintenance
         self._maintain_reservations()
-        # 6-9. invalidation + negotiation
+        # 6-9. invalidation + negotiation (in approval mode: refresh the recommendation queue)
+        self._prune_recommendations()
         self._microstep("tick")
         # 10. movement
         for res in sorted(w.resources.values(), key=lambda r: r.id):
@@ -1130,7 +1276,7 @@ class Engine:
                 why = "not participating"
             others.append({"resource_id": r.id, "feasible": False, "reason": why, "cost": None})
         return {
-            "id": f"D-{len(self.decisions) + 1:05d}",
+            "id": self._next_decision_id(),
             "tick": w.tick,
             "round_id": rnd.id,
             "strategy": rnd.strategy,
@@ -1162,11 +1308,17 @@ class Engine:
             "weights": dict(self.cfg.weights),
         }
 
+    def _next_decision_id(self) -> str:
+        # a counter, not len(self.decisions): several decisions are opened in one round before
+        # any is finalised, and a length-based id made them collide and overwrite each other
+        self._decision_seq += 1
+        return f"D-{self._decision_seq:05d}"
+
     def finalize_decision(self, dec: dict[str, Any]) -> None:
         iid = dec["incident_id"]
         outcome = dec["outcome"]
-        if outcome == "UNMATCHED" and self._last_outcome.get(iid) == "UNMATCHED":
-            return  # avoid recording identical "still waiting" decisions every tick
+        if outcome in ("UNMATCHED", "RECOMMENDED", "OPERATOR_REJECTED") and self._last_outcome.get(iid) == outcome and not dec.get("recommendation_id"):
+            return  # avoid recording identical "still waiting" / "awaiting operator" decisions every tick
         self._last_outcome[iid] = outcome
         dec["explanation"], dec["what_would_change"] = explain(dec)
         self.decisions[dec["id"]] = dec
@@ -1210,10 +1362,11 @@ def explain(dec: dict[str, Any]) -> tuple[str, str]:
     sel = dec.get("selected")
     parts = []
     change = ""
-    if dec["outcome"] == "COMMITTED" and sel:
+    if dec["outcome"] in ("COMMITTED", "RECOMMENDED") and sel:
         comp = sel.get("components", {})
+        verb = "was committed to" if dec["outcome"] == "COMMITTED" else "is recommended for"
         parts.append(
-            f"{sel['resource_id']} was committed to {inc} with the lowest accepted cost {sel['cost']:.3f} among {len(feas)} feasible option(s): "
+            f"{sel['resource_id']} {verb} {inc} with the lowest accepted cost {sel['cost']:.3f} among {len(feas)} feasible option(s): "
             f"pickup ETA {sel['eta_pickup']} min, {sel['eta_total']} min door-to-shelter via {dec.get('shelter')} "
             f"(T={comp.get('T', 0):.2f}, R={comp.get('R', 0):.2f}, U={comp.get('U', 0):.2f}, F={comp.get('F', 0):.2f})."
         )

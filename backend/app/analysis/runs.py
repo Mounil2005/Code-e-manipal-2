@@ -269,3 +269,56 @@ def adversarial(cfg: ScenarioConfig, strategy: str, n_failures: int, categories:
         "worst": results[:6],
         "all_scores": [{"trial": r["trial"], "score": r["score"], "unmet": r["metrics"]["unmet_people"], "misses": r["metrics"]["deadline_misses"]} for r in results],
     }
+
+
+# ---------------------------------------------------------------- Pareto front over policies
+
+def policy_grid() -> list[dict[str, Any]]:
+    """The named policies plus a grid over the cost weights (T time, R risk, U urgency, F fairness)."""
+    out = [{"name": k, "weights": dict(v)} for k, v in POLICIES.items()]
+    seen = {tuple(sorted(x["weights"].items())) for x in out}
+    for T in (0.2, 0.35, 0.5, 0.65):
+        for F in (0.0, 0.2, 0.4):
+            R = 0.2
+            U = round(1.0 - T - F - R, 2)
+            if U < 0.05:
+                continue
+            w = {"T": T, "R": R, "U": U, "F": F}
+            key = tuple(sorted(w.items()))
+            if key not in seen:
+                seen.add(key)
+                out.append({"name": f"T{T:g} U{U:g} F{F:g}", "weights": w})
+    return out
+
+
+def pareto(cfg: ScenarioConfig, seeds: list[int], strategy: str = "decentralized", progress: Optional[Callable[[float], None]] = None) -> dict[str, Any]:
+    """Run every policy over the same seeds and mark the non-dominated ones on
+    (mean time to service, lower), (fairness, higher), (people not delivered, lower)."""
+    grid = policy_grid()
+    total = len(grid) * len(seeds)
+    done = 0
+    points = []
+    for pol in grid:
+        ms = []
+        for seed in seeds:
+            c = copy.deepcopy(cfg)
+            c.seed = seed
+            c.weights = dict(pol["weights"])
+            c.policy = pol["name"] if pol["name"] in POLICIES else "custom"
+            r = run_one(c, strategy)
+            ms.append(r)
+            done += 1
+            if progress:
+                progress(done / total)
+        agg = lambda k: round(statistics.fmean([m[k] for m in ms if m[k] is not None]), 3) if any(m[k] is not None for m in ms) else None  # noqa: E731
+        points.append({**pol, "mean_time_to_service": agg("mean_time_to_service"), "fairness_jain": agg("fairness_jain"), "unmet_people": agg("unmet_people"), "deadline_misses": agg("deadline_misses")})
+
+    def dominates(a: dict, b: dict) -> bool:
+        ka = (a["mean_time_to_service"], -a["fairness_jain"], a["unmet_people"])
+        kb = (b["mean_time_to_service"], -b["fairness_jain"], b["unmet_people"])
+        return all(x <= y for x, y in zip(ka, kb)) and any(x < y for x, y in zip(ka, kb))
+
+    valid = [pt for pt in points if None not in (pt["mean_time_to_service"], pt["fairness_jain"], pt["unmet_people"])]
+    for pt in points:
+        pt["pareto"] = pt in valid and not any(dominates(o, pt) for o in valid if o is not pt)
+    return {"scenario": cfg.key, "map": cfg.map, "seeds": seeds, "strategy": strategy, "points": points, "objectives": ["mean_time_to_service (min, lower is better)", "fairness_jain (higher is better)", "unmet_people (lower is better)"]}

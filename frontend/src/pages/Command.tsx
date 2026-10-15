@@ -8,11 +8,17 @@ import { ChaosButtons } from "../components/Chaos";
 import { ActivityFeed } from "../components/Feed";
 import { SelectionPanel } from "../components/SelectionPanel";
 import { NewRunMenu, SimControls } from "../components/Shell";
+import { api } from "../lib/api";
 import { Badge, Button, cx, Empty, inputCls, Panel, Segmented, Spinner, Stat } from "../components/ui";
 import { fmt, INCIDENT_TONE, isOpen, pct, statusLabel, URGENCY_TONE } from "../lib/format";
 
 export default function Command() {
   const { world, frame, sim, layers, selection, setSelection, toggleLayer, inject, audit, focus } = useSim();
+  const [observed, setObserved] = useState<{ runs: number[][]; row_km: number } | null>(null);
+  useEffect(() => {
+    if (!layers.satellite || !world?.map.real) return;
+    api.get<{ s1: { runs: number[][]; row_km: number } | null }>(`/api/evidence?map=${encodeURIComponent(world.map.id)}`).then((d) => setObserved(d.s1)).catch(() => setObserved(null));
+  }, [layers.satellite, world?.map.id]);
   const [mode, setMode] = useState<"select" | "close-edge" | "new-incident">("select");
   const [filter, setFilter] = useState<"open" | "urgent" | "uncovered" | "all">("open");
   const [tab, setTab] = useState<"detail" | "feed">("feed");
@@ -135,6 +141,7 @@ export default function Command() {
             world={world}
             frame={frame}
             focus={focus}
+            observed={layers.satellite ? observed : null}
             layers={layers}
             selection={selection}
             mode={mode}

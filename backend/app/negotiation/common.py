@@ -315,7 +315,10 @@ def release_reservation(world: WorldState, rsv_id: str, status: str = Reservatio
 
 
 def try_commit(engine: Any, cand: Candidate, rnd: NegotiationRound, decision: dict[str, Any]) -> Optional[Assignment]:
-    """Shelter reservation -> safety validation -> atomic commit."""
+    """Shelter reservation -> safety validation -> atomic commit.
+    In approval mode the agents' choice becomes a recommendation for the operator instead."""
+    if getattr(engine.cfg, "approval_mode", False) and rnd.strategy != "operator":
+        return engine.recommend(cand, rnd, decision)
     world: WorldState = engine.world
     res = world.resources[cand.resource_id]
     inc = world.incidents[cand.incident_id]

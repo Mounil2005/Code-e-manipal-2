@@ -187,6 +187,17 @@ def frame(engine: Any) -> dict[str, Any]:
         "flood_offset": w.flood_offset,
         "coordinator": {"available": w.tick >= w.coordinator_down_until, "restores_at": w.coordinator_down_until},
         "route_ghosts": [g for g in engine.route_ghosts if w.tick - g["tick"] <= 15],
+        "approval_mode": bool(getattr(engine.cfg, "approval_mode", False)),
+        "recommendations": [
+            {**r, "age": w.tick - r["tick"], "why": (engine.decisions.get(r["decision_id"]) or {}).get("explanation", "")}
+            for r in sorted(getattr(engine, "recommendations", {}).values(), key=lambda r: r["id"])
+        ],
+        "operator": {
+            "approvals": engine.counters.get("approvals", 0),
+            "rejections": engine.counters.get("operator_rejections", 0),
+            "overrides": engine.counters.get("operator_overrides", 0),
+            "mean_latency": round(sum(engine.approval_latency) / len(engine.approval_latency), 1) if getattr(engine, "approval_latency", None) else None,
+        },
         "resources": resources,
         "incidents": incidents,
         "shelters": shelters,

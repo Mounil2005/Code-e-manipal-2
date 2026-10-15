@@ -35,9 +35,11 @@ interface Props {
   highlight?: string[];
   /** fly the camera here (real-geography maps); a new `key` re-triggers */
   focus?: Focus;
+  /** observed water (Sentinel-1) as horizontal pixel runs [x0, y, x1] in km */
+  observed?: { runs: number[][]; row_km: number } | null;
 }
 
-const ALL: Layers = { roads: true, water: true, flood: true, closures: true, routes: true, incidents: true, units: true, shelters: true, uncertain: true, labels: false };
+const ALL: Layers = { roads: true, water: true, flood: true, closures: true, routes: true, incidents: true, units: true, shelters: true, uncertain: true, labels: false, satellite: true };
 const PAD = 0.7;
 const MARKER_SCALE = 0.82;
 
@@ -48,7 +50,7 @@ const MARKER_SCALE = 0.82;
  * hosted inside Leaflet (stroke widths in screen px, markers counter-scaled by --k so
  * they keep a constant on-screen size at every zoom).
  */
-function Scene({ world, frame, layers: layerProp, selection, onSelect, onEdgeClick, onNodeClick, mode = "select", transitionMs = 900, compact, highlight = [], geo, clicked }: Props & { geo: boolean; clicked: (e?: React.MouseEvent) => boolean }) {
+function Scene({ world, frame, layers: layerProp, selection, onSelect, onEdgeClick, onNodeClick, mode = "select", transitionMs = 900, compact, highlight = [], geo, clicked, observed }: Props & { geo: boolean; clicked: (e?: React.MouseEvent) => boolean }) {
   const layers = { ...ALL, ...layerProp };
   const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
   const nodes = useMemo(() => Object.fromEntries(world.nodes.map((n) => [n.id, n])), [world]);
@@ -154,6 +156,14 @@ function Scene({ world, frame, layers: layerProp, selection, onSelect, onEdgeCli
             })}
           </g>
         ))}
+      {/* observed water, Sentinel-1 */}
+      {geo && observed && layers.satellite && (
+        <g opacity={0.55} pointerEvents="none">
+          {observed.runs.map(([x0, y, x1], i) => (
+            <rect key={"s1" + i} x={x0} y={y - observed.row_km / 2} width={Math.max(0.002, x1 - x0)} height={observed.row_km} fill="#c026d3" />
+          ))}
+        </g>
+      )}
       {/* district labels */}
       {!compact &&
         nbCentroids.map((c) => (
