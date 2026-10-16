@@ -14,6 +14,8 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
   const [runs, setRuns] = useState<any[]>([]);
   const [outFilter, setOutFilter] = useState<"all" | "unmet" | "missed">("all");
+  const [tables, setTables] = useState(false);
+  const [moreStats, setMoreStats] = useState(false);
 
   const load = async () => {
     if (!sim) return;
@@ -48,25 +50,25 @@ export default function Reports() {
 
   if (!sim) return <Spinner />;
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-5 p-5">
       <div className="no-print">
         <PageHeader
-          eyebrow="after-action report"
-          title="What happened, what it cost, what to change"
-          sub="Generated only from this run's events and metrics. The strategy comparison replays the same seed and the same injected events under each strategy."
+          eyebrow="report"
+          title="Report"
+          sub="What happened, what it cost and what to change. Built only from this run's events and metrics."
           right={
             <>
-              <Button size="sm" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={load}>
-                Regenerate at t={frame?.tick}
+              <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={load}>
+                Refresh
               </Button>
-              <Button size="sm" icon={<FileJson className="size-3.5" />} disabled={!rep} onClick={downloadJson}>
+              <Button size="sm" variant="ghost" icon={<FileJson className="size-3.5" />} disabled={!rep} onClick={downloadJson}>
                 JSON
               </Button>
               <a href={apiUrl(`/api/reports/${sim.id}?format=pdf`)} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-ink px-2.5 text-xs font-medium text-white hover:bg-ink-2">
                 <Download className="size-3.5" />
                 PDF
               </a>
-              <Button size="sm" variant="ghost" icon={<Printer className="size-3.5" />} onClick={() => window.print()}>
+              <Button size="sm" variant="ghost" icon={<Printer className="size-3.5" />} onClick={() => { setTables(true); setTimeout(() => window.print(), 150); }}>
                 Print
               </Button>
             </>
@@ -77,7 +79,7 @@ export default function Reports() {
       {!rep ? (
         loading ? <Spinner label="Compiling report (re-running comparison strategies)…" /> : <Empty title="No report" />
       ) : (
-        <article className="space-y-3">
+        <article className="space-y-5">
           <div className="panel p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -95,21 +97,28 @@ export default function Reports() {
                 </div>
               </div>
             </div>
-            <div className="mt-2 rounded-lg bg-warn-soft/60 px-3 py-2 text-xs text-warn">{rep.disclaimer}</div>
-            <div className="mt-5 grid grid-cols-2 gap-5 md:grid-cols-4 xl:grid-cols-8">
-              <Stat label="rescued" value={rep.metrics.people_rescued} tone="ok" hint={`of ${rep.metrics.people_total_known} known`} />
-              <Stat label="not delivered" value={rep.metrics.unmet_people} tone={rep.metrics.unmet_people ? "warn" : undefined} />
-              <Stat label="mean tts" value={fmt(rep.metrics.mean_time_to_service)} unit="min" hint={`p90 ${fmt(rep.metrics.p90_time_to_service)}`} />
-              <Stat label="deadline misses" value={rep.metrics.deadline_misses} tone={rep.metrics.deadline_misses ? "crit" : undefined} />
-              <Stat label="utilisation" value={pct(rep.metrics.utilisation)} />
-              <Stat label="fairness" value={fmt(rep.metrics.fairness_jain, 3)} tone="info" />
-              <Stat label="reassignments" value={rep.metrics.reassignments} hint={`${rep.metrics.reroutes} reroutes`} />
-              <Stat label="safety" value={rep.safety.route_violations + rep.safety.invariant_violations} tone={rep.safety.route_violations + rep.safety.invariant_violations ? "crit" : "ok"} hint="violations" />
+            <div className="mt-6 grid grid-cols-2 gap-6 md:grid-cols-4">
+              <Stat label="People rescued" value={rep.metrics.people_rescued} tone="ok" hint={`of ${rep.metrics.people_total_known} known`} />
+              <Stat label="Not delivered" value={rep.metrics.unmet_people} tone={rep.metrics.unmet_people ? "warn" : undefined} />
+              <Stat label="Deadlines missed" value={rep.metrics.deadline_misses} tone={rep.metrics.deadline_misses ? "crit" : undefined} />
+              <Stat label="Safety violations" value={rep.safety.route_violations + rep.safety.invariant_violations} tone={rep.safety.route_violations + rep.safety.invariant_violations ? "crit" : "ok"} hint={`${rep.safety.commit_rejections} unsafe plans blocked`} />
             </div>
+            <button className="no-print mt-4 text-sm text-info hover:underline" onClick={() => setMoreStats((v) => !v)}>
+              {moreStats ? "Fewer metrics" : "More metrics"}
+            </button>
+            {moreStats && (
+              <div className="mt-4 grid grid-cols-2 gap-6 border-t border-line pt-4 md:grid-cols-4">
+                <Stat label="Average wait" value={fmt(rep.metrics.mean_time_to_service)} unit="min" hint={`slowest 10%: ${fmt(rep.metrics.p90_time_to_service)} min`} />
+                <Stat label="Fleet utilisation" value={pct(rep.metrics.utilisation)} />
+                <Stat label="Fairness" value={fmt(rep.metrics.fairness_jain, 3)} tone="info" hint="1.0 = everyone waits equally" />
+                <Stat label="Re-plans" value={rep.metrics.reassignments} hint={`${rep.metrics.reroutes} reroutes`} />
+              </div>
+            )}
+            <p className="mt-5 text-xs text-mute">{rep.disclaimer}</p>
           </div>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <Panel title="lessons from this run">
+            <Panel title="Lessons from this run">
               <ul className="space-y-2 p-4 text-sm">
                 {rep.lessons.map((l: string, i: number) => (
                   <li key={i} className="flex gap-2">
@@ -119,7 +128,7 @@ export default function Reports() {
                 ))}
               </ul>
             </Panel>
-            <Panel title="fairness by neighbourhood" sub="mean wait (served: time-to-service; unserved: current wait)">
+            <Panel title="Who waited longest" sub="Average wait by neighbourhood, in minutes">
               <div className="h-56 p-2">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={rep.metrics.fairness_by_neighbourhood} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
@@ -136,7 +145,7 @@ export default function Reports() {
           </div>
 
           {rep.strategy_comparison.length > 0 && (
-            <Panel title="strategy comparison · same seed, same injected events">
+            <Panel title="How the strategies compare" sub="Same seed, same injected failures">
               <table className="w-full text-sm">
                 <thead className="label">
                   <tr className="border-b border-line">
@@ -168,7 +177,7 @@ export default function Reports() {
           )}
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <Panel title="critical timeline">
+            <Panel title="Key moments">
               <div className="scroll-thin max-h-[420px] overflow-y-auto">
                 {rep.critical_timeline.map((e: any, i: number) => (
                   <div key={i} className="flex gap-3 border-b border-line/60 px-4 py-1.5 text-[12.5px]">
@@ -178,7 +187,7 @@ export default function Reports() {
                 ))}
               </div>
             </Panel>
-            <Panel title="disruptions & recovery">
+            <Panel title="Failures and recovery">
               <div className="divide-y divide-line">
                 {rep.disruptions.length === 0 ? (
                   <Empty title="No disruptions in this run" />
@@ -208,7 +217,17 @@ export default function Reports() {
             </Panel>
           </div>
 
-          <Panel title="rescue outcomes" right={<Segmented size="sm" value={outFilter} onChange={setOutFilter} options={[{ value: "all", label: "All" }, { value: "unmet", label: "Not rescued" }, { value: "missed", label: "Missed deadline" }]} />}>
+          {!tables ? (
+            <div className="no-print panel flex items-center justify-between gap-4 p-5">
+              <div>
+                <div className="text-sm font-semibold">Detailed tables</div>
+                <div className="text-xs text-mute">Every rescue outcome, unit utilisation, safety results and past runs.</div>
+              </div>
+              <Button onClick={() => setTables(true)}>Show detailed tables</Button>
+            </div>
+          ) : (
+            <>
+          <Panel title="Rescue outcomes" right={<Segmented size="sm" value={outFilter} onChange={setOutFilter} options={[{ value: "all", label: "All" }, { value: "unmet", label: "Not rescued" }, { value: "missed", label: "Missed deadline" }]} />}>
             <div className="scroll-thin max-h-[420px] overflow-auto">
               <table className="w-full text-[12.5px]">
                 <thead className="label sticky top-0 bg-white">
@@ -242,7 +261,7 @@ export default function Reports() {
           </Panel>
 
           <div className="grid gap-3 lg:grid-cols-2">
-            <Panel title="resource utilisation">
+            <Panel title="Unit utilisation">
               <table className="w-full text-[12.5px]">
                 <tbody>
                   {rep.resources.map((r: any) => (
@@ -258,7 +277,7 @@ export default function Reports() {
                 </tbody>
               </table>
             </Panel>
-            <Panel title="safety constraint results & limitations">
+            <Panel title="Safety results and limitations">
               <div className="space-y-1 p-4 text-sm">
                 <div>Route violations: <b className="mono">{rep.safety.route_violations}</b> · Invariant violations: <b className="mono">{rep.safety.invariant_violations}</b></div>
                 <div>Commits rejected: <b className="mono">{rep.safety.commit_rejections}</b> · Movements blocked: <b className="mono">{rep.safety.movement_blocks}</b></div>
@@ -271,7 +290,7 @@ export default function Reports() {
             </Panel>
           </div>
 
-          <Panel title="compare runs" sub="Every run is stored event-sourced and can be reopened" className="no-print">
+          <Panel title="Past runs" sub="Every run is stored and can be reopened" className="no-print">
             <div className="scroll-thin max-h-[300px] overflow-auto">
               <table className="w-full text-[12.5px]">
                 <thead className="label">
@@ -309,6 +328,8 @@ export default function Reports() {
               <p className="px-3 py-2 text-[11px] text-mute">Final metrics are stored when a run finishes; in-progress runs show “—”.</p>
             </div>
           </Panel>
+            </>
+          )}
         </article>
       )}
     </div>

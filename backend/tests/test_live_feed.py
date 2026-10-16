@@ -109,6 +109,32 @@ def test_drill_and_synthetic_plans():
     assert len(s) == 14 and max(r["ramp"] for r in s) == 0.8 and s[0]["ramp"] == 0.0
 
 
+def test_odisha_drill_replays_the_2022_mahanadi_flood_with_qc_and_hirakud_reports():
+    d = drill_plan("odisha_mahanadi_delta")
+    assert d[0]["time"] == "2022-08-13T00:00" and d[-1]["time"] == "2022-08-19T00:00"
+    assert max(r["level_m"] for r in d) == 27.49  # Naraj, 17 Aug 2022 08:00
+    # 16 Aug was filed ~2.6 m low; QC fills it between the readings either side, marked
+    bad = [r for r in d if r["time"].startswith("2022-08-16")]
+    assert len(bad) == 24 and all(r.get("interpolated") for r in bad) and min(r["level_m"] for r in bad) > 27.0
+    assert not any(r.get("interpolated") for r in d if not r["time"].startswith("2022-08-16"))
+    # the river never jumps back down by more than a metre in an hour
+    assert all(b["level_m"] - a["level_m"] > -1.0 for a, b in zip(d, d[1:]))
+    dams = [x for r in d for x in r.get("dams", [])]
+    assert dams and all(x["dam"] == "Hirakud reservoir" for x in dams) and max(x["outflow_m3s"] for x in dams) == 18957.0
+    assert ramp_for_level("odisha_mahanadi_delta", 23.0) == 0.0 and ramp_for_level("odisha_mahanadi_delta", 27.49) == 1.0
+
+
+def test_odisha_map_uses_osdma_shelters_and_floods_from_the_naraj_gauge():
+    e = _live("odisha_mahanadi_delta")
+    snap_shelters = [s for s in e.world.shelters.values()]
+    assert any("flood shelter" in s.name.lower() for s in snap_shelters)
+    hub = FeedHub()
+    wet0 = sum(1 for n in e.world.nodes.values() if n.depth > 0)
+    hub.apply(e, {"type": "gauge", "source": "drill", "level_m": 27.49, "station": "Naraj"})
+    assert e.world.river_override == 1.0
+    assert sum(1 for n in e.world.nodes.values() if n.depth > 0) > wet0
+
+
 def test_feed_api_and_background_drill():
     with TestClient(app) as c:  # one event loop for the whole test, so the background feed keeps running
         _feed_api_and_background_drill(c)

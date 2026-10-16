@@ -86,6 +86,20 @@ python scripts/build_flood_event.py kerala_aluva
 
 Discharge and rainfall are real; inundation depths are still produced by the simulator's threshold model, so this is a replay of the flood's timing and intensity, not a reconstruction of observed flood extent. `scripts/validate_flood.py` compares the modelled flood footprint with a Sentinel-1 water mask from 21 Aug 2018; results and caveats are in `docs/flood_validation.md`.
 
+### Live ops on Odisha (Mahanadi delta)
+
+The Kerala story shows what would have happened in 2018. Live ops runs somewhere else on purpose: the lower Mahanadi delta around Marshaghai and Kujang (`odisha_mahanadi_delta`). The relief camps there come from OSDMA's shelter register (osdma.org/shelter-locations, saved in `backend/app/data/sources/osdma_shelters.json`): multipurpose flood and cyclone shelters at their real coordinates.
+
+- **Go live:** reads the CWC gauge at Naraj, the head of the delta, and the Hirakud reservoir every 60 s.
+- **Flood drill:** replays the real August 2022 Mahanadi flood hour by hour. Naraj rose from 23.0 m to 27.49 m on 17 Aug, and Hirakud released up to 18,957 m³/s.
+  - The CWC record files all of 16 Aug about 2.6 m low. A QC step (`scripts/build_cwc_drill.py`) rejects that day and interpolates it, and the feed labels those readings.
+- **Synthetic flood:** your own rise, hold and fall, scaled to that 2022 peak.
+
+```bash
+python scripts/build_map.py mahanadi_delta
+python scripts/build_cwc_drill.py odisha_mahanadi_delta
+```
+
 ### Demo
 
 **Judge Mode** (`/judge`) tells the Aluva 2018 flood in five chapters, and each chapter drives the live engine:

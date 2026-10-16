@@ -171,7 +171,7 @@ def _levels(map_id, key="kerala_2018", ticks=180):
     return e, out
 
 
-@pytest.mark.parametrize("map_id", REAL)
+@pytest.mark.parametrize("map_id", [m for m in REAL if m.startswith("kerala_")])  # the 2018 replay is Kerala's
 def test_flood_event_drives_river_level_from_real_discharge(map_id):
     e, rows = _levels(map_id)
     assert e.world.flood_curve is not None

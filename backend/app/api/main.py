@@ -213,9 +213,13 @@ async def run_feed(s: Session, mode: str, p: dict[str, Any]) -> None:
             for i, row in enumerate(plan):
                 if not hub.running or e.finished:
                     break
+                for dm in row.get("dams", []):
+                    push({"type": "dam", "source": src, **dm})
                 msg = {"type": "gauge", "source": src, "level_m": row["level_m"], "station": row["station"], "time": row["time"]}
                 if "ramp" in row:
                     msg["ramp"] = row["ramp"]
+                if row.get("interpolated"):
+                    msg["label"] = "interpolated (CWC reading failed QC)"
                 push(msg)
                 last_level = row["level_m"]
                 ramp = e.world.river_override or 0.0
@@ -486,7 +490,8 @@ async def set_speed(sim_id: str, body: SpeedIn) -> dict[str, Any]:
 async def live_cwc(map: str = "kerala_aluva") -> dict[str, Any]:
     if map not in cwc_mod.STATIONS:
         return {"available": False, "reason": f"no CWC station configured for {map}"}
-    return await asyncio.to_thread(cwc_mod.latest, map)
+    # the station set-up (name, river, reference flood) is static, so it is there even when CWC is down
+    return {**await asyncio.to_thread(cwc_mod.latest, map), "station": cwc_mod.STATIONS[map]["gauge"]}
 
 
 @app.post("/api/simulations/{sim_id}/feed")

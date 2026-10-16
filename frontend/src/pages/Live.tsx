@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Bomb, Check, UserCheck, CloudRain, Droplets, Gauge, MapPin, Radio, Route, Siren, Square, Tent, Waves, Zap } from "lucide-react";
+import { ArrowDown, ArrowUp, Bomb, Check, ChevronDown, Copy, UserCheck, CloudRain, Droplets, Gauge, MapPin, Radio, Route, Siren, Square, Tent, Waves, Zap } from "lucide-react";
 import { api } from "../lib/api";
 import { useSim } from "../store/sim";
 import { CityMap, MapLegend } from "../components/CityMap";
@@ -11,8 +11,12 @@ import type { FeedDelta, FeedMessage, Frame, LiveCwc, PriorityRow, Recommendatio
  * the real 2018 CWC gauge record (drill) or a synthetic flood; SOS calls and field reports arrive
  * through the same feed. Everything shown is the engine's own state and reasoning. */
 
+/** Live ops runs on Odisha (the Mahanadi delta, Naraj gauge), so it is visibly a different place
+ * from the Kerala 2018 story in Judge Mode. Falls back to the chosen map if the snapshot is absent. */
+export const LIVE_MAP = "odisha_mahanadi_delta";
+
 const SOURCE_TONE: Record<string, string> = { live: "ok", drill: "warn", synthetic: "info", external: "ink" };
-const SOURCE_LABEL: Record<string, string> = { live: "live · CWC", drill: "drill · 2018 CWC readings", synthetic: "synthetic", external: "external sender" };
+const SOURCE_LABEL: Record<string, string> = { live: "live · CWC", drill: "drill · past flood, real CWC readings", synthetic: "synthetic", external: "external sender" };
 const TYPE_ICON: Record<string, React.ReactNode> = {
   gauge: <Gauge className="size-3.5" />,
   sos: <Siren className="size-3.5" />,
@@ -46,7 +50,8 @@ function Spark({ values, w = 140, h = 30, color = "#0891b2" }: { values: number[
 }
 
 export default function Live() {
-  const { world, frame, sim, createSim, inject, focus, feed, feedStatus, openDecision, setSelection, selection, setFocus, toast, mapId } = useSim();
+  const { world, frame, sim, createSim, inject, focus, feed, feedStatus, openDecision, setSelection, selection, setFocus, toast, mapId, maps } = useSim();
+  const liveMap = maps.some((x) => x.id === LIVE_MAP) ? LIVE_MAP : mapId;
   const [cwc, setCwc] = useState<LiveCwc | null>(null);
   const [board, setBoard] = useState<PriorityRow[]>([]);
   const [mode, setMode] = useState<"drill" | "synthetic">("drill");
@@ -55,21 +60,34 @@ export default function Live() {
   const [busy, setBusy] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [deltaSeq, setDeltaSeq] = useState<number | null>(null);
-  const onLive = sim?.scenario === "live_ops";
-  const real = !!world?.map.real;
+  const onLive = sim?.scenario === "live_ops" && sim?.map === liveMap;
+  const [showSetup, setShowSetup] = useState(false);
+  const real = liveMap !== "riverbend";
+  const record = cwc?.station?.record ?? "past flood";
+  const gaugeName = cwc?.station?.name ?? "the gauge";
+
+  // open the live map straight away (calm, nothing running), so the page never shows the Kerala story's map
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current || !maps.length) return;
+    const st = useSim.getState();
+    if (st.sim?.scenario === "live_ops" && st.sim.map === liveMap && !st.frame?.finished) return;
+    opened.current = true;
+    createSim("live_ops", "decentralized", { seed: 7 }, liveMap).catch(() => {});
+  }, [maps.length, liveMap, createSim]);
 
   // real CWC readings for the map's gauge and dams (the backend caches; CWC updates hourly)
   useEffect(() => {
     if (!real) return;
     let alive = true;
-    const load = () => api.get<LiveCwc>(`/api/live/cwc?map=${encodeURIComponent(mapId)}`).then((d) => alive && setCwc(d)).catch(() => alive && setCwc({ available: false, reason: "backend unreachable" }));
+    const load = () => api.get<LiveCwc>(`/api/live/cwc?map=${encodeURIComponent(liveMap)}`).then((d) => alive && setCwc(d)).catch(() => alive && setCwc({ available: false, reason: "backend unreachable" }));
     load();
     const t = setInterval(load, 60000);
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, [mapId, real]);
+  }, [liveMap, real]);
 
   // the engine's own ranking, refreshed every 2 s
   useEffect(() => {
@@ -86,7 +104,7 @@ export default function Live() {
 
   const ensureLiveSim = async (fresh: boolean) => {
     const st = useSim.getState();
-    if (fresh || st.sim?.scenario !== "live_ops" || st.frame?.finished) await createSim("live_ops", "decentralized", { seed: 7 });
+    if (fresh || st.sim?.scenario !== "live_ops" || st.sim.map !== liveMap || st.frame?.finished) await createSim("live_ops", "decentralized", { seed: 7 }, liveMap);
     return useSim.getState().sim!;
   };
   const run = async (label: string, fn: () => Promise<void>) => {
@@ -112,10 +130,10 @@ export default function Live() {
       setFocus({ points: [], fit: true });
     });
   const stopFeed = () => run("Stop", async () => void (sim && (await api.post(`/api/simulations/${sim.id}/feed/stop`, {}))));
-  const sendSos = (node: string) =>
+  const sendSos = (node: string, opts?: { people?: number; urgency?: number; reporter?: string }) =>
     sim &&
     api
-      .post(`/api/simulations/${sim.id}/feed`, { type: "sos", source: "external", node, people: 4, urgency: 4, reporter: "resident" })
+      .post(`/api/simulations/${sim.id}/feed`, { type: "sos", source: "external", node, people: opts?.people ?? 4, urgency: opts?.urgency ?? 4, reporter: opts?.reporter ?? "resident" })
       .then(() => {
         toast({ kind: "info", title: `SOS received at ${node}`, body: "Sent through the live feed like any external system would." });
         setPlacing(false);
@@ -135,48 +153,74 @@ export default function Live() {
   const status = feedStatus;
   const srcNow = status?.mode === "live" ? "live" : status?.mode ?? null;
   const m = frame?.metrics;
+  const setupOpen = showSetup || (!status?.running && !onLive);
 
   return (
-    <div className="space-y-3 p-4">
+    <div className="space-y-5 p-5">
       {/* header */}
-      <section className="flex flex-wrap items-center gap-3 rounded-2xl bg-slate-950 px-5 py-4 text-white">
-        <div className="min-w-0 flex-1">
-          <p className="mono text-[11px] uppercase tracking-[0.22em] text-cyan-300">live operations · {world?.map.name ?? ""}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Real-time feed in, prioritised rescue out</h1>
-          <p className="mt-1 max-w-4xl text-sm text-slate-300">
-            River gauge readings, SOS calls and field reports arrive through one feed. The agents re-negotiate after every message; the board shows who is helped first and why.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          {onLive && frame && (
-            <div className="rounded-full bg-white/10 p-0.5">
-              <Segmented
-                size="sm"
-                value={frame.approval_mode ? "operator" : "auto"}
-                onChange={(v) => inject("SET_APPROVAL_MODE", { enabled: v === "operator" }, v === "operator" ? "Operator approves every dispatch" : "Autonomous dispatch")}
-                options={[
-                  { value: "operator", label: "AI recommends · you decide" },
-                  { value: "auto", label: "Autonomous" },
-                ]}
-              />
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[-0.02em]">Live ops</h1>
+          {onLive && world && (
+            <div className="mt-1 text-sm font-medium text-ink-2">
+              {world.map.name} <span className="font-normal text-mute">· {world.map.region}</span>
             </div>
           )}
+          <p className="mt-1 max-w-2xl text-sm text-mute">River readings, SOS calls and field reports arrive through one feed. The agents re-plan after every message and the board shows who is helped first.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {onLive && frame && (
+            <Segmented
+              size="sm"
+              value={frame.approval_mode ? "operator" : "auto"}
+              onChange={(v) => inject("SET_APPROVAL_MODE", { enabled: v === "operator" }, v === "operator" ? "Operator approves every dispatch" : "Autonomous dispatch")}
+              options={[
+                { value: "operator", label: "You approve" },
+                { value: "auto", label: "Autonomous" },
+              ]}
+            />
+          )}
           {srcNow ? (
-            <Badge tone={SOURCE_TONE[srcNow]} dot>
-              {status?.running ? "feeding" : "stopped"} · {SOURCE_LABEL[srcNow]}
+            <Badge tone={srcNow === "live" ? "ok" : status?.running ? "info" : "neutral"} dot>
+              {status?.running ? "Feeding" : "Stopped"}
+              {srcNow === "live" ? " · live CWC" : ""}
             </Badge>
           ) : (
-            <Badge tone="neutral">feed idle</Badge>
+            <Badge tone="neutral">Feed idle</Badge>
           )}
-          {status?.note && <span className="mono text-[11px] text-slate-400">{status.note}</span>}
         </div>
-      </section>
+      </div>
 
-      {!real && <p className="rounded-xl border border-warn/25 bg-warn-soft p-3 text-sm text-warn">Live data needs a real Kerala map. Choose Aluva or Chengannur under New run.</p>}
 
-      {/* controls */}
-      <div className="grid gap-3 lg:grid-cols-[1.1fr_1.6fr_0.9fr]">
-        <Panel title="River right now · CWC telemetry" right={cwc?.available ? <Badge tone={cwc.stale ? "warn" : "ok"} dot>{cwc.stale ? "stale" : "real data"}</Badge> : <Badge tone="neutral">offline</Badge>}>
+      {/* run bar: always visible */}
+      <div className="panel flex flex-wrap items-center gap-3 px-4 py-2.5">
+        {status?.running && status.mode !== "live" ? (
+          <Button variant="danger" size="sm" icon={<Square className="size-3.5" />} loading={busy === "Stop"} onClick={stopFeed}>
+            Stop feed
+          </Button>
+        ) : (
+          <Button variant="solid" size="sm" icon={<CloudRain className="size-3.5" />} loading={busy === "Start flood feed"} disabled={!!busy || !real} onClick={startFeed}>
+            Start flood feed
+          </Button>
+        )}
+        {status?.note && <span className="text-xs text-mute">{status.note}</span>}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="danger" icon={<Bomb className="size-3.5" />} disabled={!onLive || !frame || frame.finished} onClick={() => inject("TRIPLE_FAILURE", {}, "Triple failure")}>
+            Bridge + boat + camp fail
+          </Button>
+          <Button size="sm" icon={<MapPin className="size-3.5" />} disabled={!onLive} onClick={() => setPlacing((x) => !x)} variant={placing ? "info" : "outline"}>
+            {placing ? "Click a junction on the map…" : "Send an SOS"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowSetup((v) => !v)} aria-expanded={setupOpen}>
+            {setupOpen ? "Hide setup" : "Feed setup"}
+          </Button>
+        </div>
+      </div>
+
+      <SosPanel simId={sim?.id} nodes={world?.nodes ?? []} enabled={onLive} onSend={sendSos} />
+
+      {setupOpen && <div className="grid gap-3 lg:grid-cols-[1fr_1.7fr]">
+        <Panel title="River right now" right={cwc?.available ? <Badge tone={cwc.stale ? "warn" : "ok"} dot>{cwc.stale ? "stale" : "real data"}</Badge> : <Badge tone="neutral">offline</Badge>}>
           <div className="space-y-2 p-3 text-sm">
             {cwc?.available && cwc.gauge ? (
               <>
@@ -197,7 +241,7 @@ export default function Live() {
                       {d.name}
                     </span>
                     <span className="mono text-[12px]">
-                      outflow <b>{d.outflow_m3s?.toFixed(0) ?? "—"}</b> m³/s
+                      {d.outflow_m3s == null && d.inflow_m3s != null ? "inflow" : "outflow"} <b>{(d.outflow_m3s ?? d.inflow_m3s)?.toFixed(0) ?? "—"}</b> m³/s
                     </span>
                   </div>
                 ))}
@@ -211,14 +255,14 @@ export default function Live() {
           </div>
         </Panel>
 
-        <Panel title="Flood feed" sub="Streams readings and field traffic into the live pipeline">
-          <div className="space-y-3 p-3">
+        <Panel title="Flood feed" sub="Choose a source, then start">
+          <div className="space-y-5 p-5">
             <Segmented
               size="sm"
               value={mode}
               onChange={setMode}
               options={[
-                { value: "drill", label: "2018 drill · real CWC gauge readings" },
+                { value: "drill", label: `${record} flood drill · real ${gaugeName} readings` },
                 { value: "synthetic", label: "Synthetic flood · your parameters" },
               ]}
             />
@@ -237,7 +281,7 @@ export default function Live() {
               </Field>
               {mode === "synthetic" && (
                 <>
-                  <Field label="peak (share of 2018)" hint={`${Math.round(p.peak * 100)}%`}>
+                  <Field label={`peak (share of the ${record} flood)`} hint={`${Math.round(p.peak * 100)}%`}>
                     <input type="range" min={0.2} max={1.2} step={0.05} value={p.peak} className="w-full accent-[#0a0a0a]" onChange={(e) => setP({ ...p, peak: Number(e.target.value) })} />
                   </Field>
                   <Field label="rise (hours)" hint={`${p.rise_hours} h`}>
@@ -251,7 +295,7 @@ export default function Live() {
                   </Field>
                 </>
               )}
-              <Field label="simulation speed" hint={`${Math.round(p.interval_s * speed)} sim-min / reading`}>
+              <Field label="Speed" hint={`${Math.round(p.interval_s * speed)} min per reading`}>
                 <select className={inputCls} value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
                   {[1, 2, 4, 8].map((v) => (
                     <option key={v} value={v}>
@@ -261,35 +305,9 @@ export default function Live() {
                 </select>
               </Field>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {status?.running && status.mode !== "live" ? (
-                <Button variant="danger" icon={<Square className="size-4" />} loading={busy === "Stop"} onClick={stopFeed}>
-                  Stop feed
-                </Button>
-              ) : (
-                <Button variant="solid" icon={<CloudRain className="size-4" />} loading={busy === "Start flood feed"} disabled={!!busy || !real} onClick={startFeed}>
-                  Start flood feed
-                </Button>
-              )}
-              <span className="self-center text-xs text-mute">{mode === "drill" ? "The real hourly gauge record from 14 Aug 2018; SOS and field reports are synthetic and labelled." : "A flood curve from your parameters; every message is labelled synthetic."}</span>
-            </div>
           </div>
         </Panel>
-
-        <Panel title="Stress it">
-          <div className="space-y-2 p-3">
-            <Button className="w-full" variant="danger" icon={<Bomb className="size-4" />} disabled={!onLive || !frame || frame.finished} onClick={() => inject("TRIPLE_FAILURE", {}, "Triple failure")}>
-              Bridge + boat + camp fail
-            </Button>
-            <Button className="w-full" icon={<MapPin className="size-4" />} disabled={!onLive} onClick={() => setPlacing((x) => !x)} variant={placing ? "info" : "outline"}>
-              {placing ? "Click a junction on the map…" : "Send an SOS (external)"}
-            </Button>
-            <p className="text-[11.5px] leading-snug text-mute">
-              Any system can post to the same feed: <span className="mono">POST /api/simulations/{"{id}"}/feed</span> with <span className="mono">{`{"type":"sos","node":"N12","people":4}`}</span>.
-            </p>
-          </div>
-        </Panel>
-      </div>
+      </div>}
 
       {onLive && frame && (
         <ApprovalQueue
@@ -305,14 +323,14 @@ export default function Live() {
 
       {/* board | map | feed */}
       {world && frame && (
-        <div className="grid gap-3 xl:grid-cols-[360px_1fr_380px]">
+        <div className="grid gap-4 xl:grid-cols-[340px_1fr_380px]">
           <PriorityBoard rows={board} recs={frame.recommendations ?? []} onPick={(r) => {
             setSelection({ type: "incident", id: r.incident });
             const i = frame.incidents.find((x) => x.id === r.incident);
             if (i) setFocus({ points: [[i.x, i.y]], zoom: 15 });
           }} onWhy={(id) => openDecision(id)} />
           <div className="panel relative h-[72vh] min-h-[420px] overflow-hidden">
-            <CityMap world={world} frame={frame} focus={focus} selection={selection} onSelect={setSelection} mode={placing ? "new-incident" : "select"} onNodeClick={sendSos} transitionMs={Math.max(80, 1000 / (sim?.speed || 1))} />
+            <CityMap world={world} frame={frame} focus={focus} selection={selection} onSelect={setSelection} mode={placing ? "new-incident" : "select"} onNodeClick={(n) => sendSos(n)} transitionMs={Math.max(80, 1000 / (sim?.speed || 1))} />
             <GaugeCard msgs={gaugeMsgs} />
             <div className="absolute bottom-3 left-3 z-10 rounded-xl border border-line bg-white/90 px-3 py-1.5 backdrop-blur">
               <MapLegend />
@@ -326,26 +344,101 @@ export default function Live() {
       )}
 
       {m && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {(
             [
-              ["People rescued", m.people_rescued, "ok"],
-              ["Still waiting", m.unmet_people, m.unmet_people > 20 ? "warn" : undefined],
-              ["Mean time to service", `${m.mean_time_to_service ?? "—"} min`, undefined],
-              ["Deadline misses", m.deadline_misses, m.deadline_misses ? "crit" : undefined],
-              ["Fairness (Jain)", m.fairness_jain ?? "—", undefined],
-              ["Safety violations", m.route_violations + m.invariant_violations, m.route_violations + m.invariant_violations ? "crit" : "ok"],
-              ["Operator decisions", frame?.operator ? `${frame.operator.approvals} approved · ${frame.operator.overrides} changed · ${frame.operator.rejections} rejected` : "—", undefined],
-            ] as [string, React.ReactNode, string | undefined][]
-          ).map(([label, value, tone]) => (
-            <div key={label} className="panel p-3">
+              ["People rescued", m.people_rescued, "ok", `${m.people_in_transit} on the way`],
+              ["Still waiting", m.unmet_people, m.unmet_people > 20 ? "warn" : undefined, `${m.open_incidents} open requests`],
+              ["Average wait", `${m.mean_time_to_service ?? "—"} min`, undefined, `${m.deadline_misses} deadlines missed`],
+              ["Safety violations", m.route_violations + m.invariant_violations, m.route_violations + m.invariant_violations ? "crit" : "ok", frame?.operator ? `You: ${frame.operator.approvals} approved · ${frame.operator.overrides} changed · ${frame.operator.rejections} rejected` : `${m.safety_rejections} unsafe plans blocked`],
+            ] as [string, React.ReactNode, string | undefined, string][]
+          ).map(([label, value, tone, hint]) => (
+            <div key={label} className="panel p-4">
               <div className="label">{label}</div>
-              <div className={cx("mt-1 text-xl font-semibold tracking-tight", tone === "ok" && "text-ok", tone === "warn" && "text-warn", tone === "crit" && "text-crit")}>{value}</div>
+              <div className={cx("mt-1 text-2xl font-semibold tracking-tight", tone === "ok" && "text-ok", tone === "warn" && "text-warn", tone === "crit" && "text-crit")}>{value}</div>
+              <div className="mt-1 truncate text-xs text-mute">{hint}</div>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ SOS from any system
+function SosPanel({ simId, nodes, enabled, onSend }: { simId?: string; nodes: { id: string; kind: string; label: string; neighbourhood: string }[]; enabled: boolean; onSend: (node: string, o: { people: number; urgency: number; reporter: string }) => unknown }) {
+  const land = useMemo(() => nodes.filter((n) => n.kind === "land"), [nodes]);
+  const [node, setNode] = useState("");
+  const [people, setPeople] = useState(4);
+  const [urgency, setUrgency] = useState(4);
+  const [reporter, setReporter] = useState("resident");
+  const [copied, setCopied] = useState(false);
+  const chosen = node || land[0]?.id || "N12";
+  const base = typeof window !== "undefined" && window.location.port === "5173" ? `${window.location.protocol}//${window.location.hostname}:8000` : typeof window !== "undefined" ? window.location.origin : "";
+  const body = JSON.stringify({ type: "sos", source: "external", node: chosen, people, urgency, reporter });
+  const curl = `curl -X POST ${base}/api/simulations/${simId ?? "{sim_id}"}/feed \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(curl.replace(/\\\n/g, " ").replace(/\\n/g, " "));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+  return (
+    <Panel title="Send an SOS from any system" sub="Calls, SMS gateways and field apps all post to the same feed. The agents re-plan as soon as it arrives.">
+      <div className="grid gap-5 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Where">
+              <select className={inputCls} value={chosen} onChange={(e) => setNode(e.target.value)}>
+                {land.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.id} · {n.label || n.neighbourhood}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Reported by">
+              <select className={inputCls} value={reporter} onChange={(e) => setReporter(e.target.value)}>
+                <option value="resident">Resident</option>
+                <option value="responder">Responder</option>
+                <option value="volunteer">Volunteer relay</option>
+                <option value="sensor">Sensor</option>
+              </select>
+            </Field>
+            <Field label="People" hint={String(people)}>
+              <input type="range" min={1} max={40} value={people} className="w-full accent-[#0a0a0a]" onChange={(e) => setPeople(Number(e.target.value))} />
+            </Field>
+            <Field label="Urgency" hint={`${urgency} of 5`}>
+              <input type="range" min={1} max={5} value={urgency} className="w-full accent-[#0a0a0a]" onChange={(e) => setUrgency(Number(e.target.value))} />
+            </Field>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="solid" icon={<Siren className="size-4" />} disabled={!enabled || !simId} onClick={() => onSend(chosen, { people, urgency, reporter })}>
+              Send SOS
+            </Button>
+            {!enabled && <span className="text-xs text-mute">Start the flood feed first so there is a live run to receive it.</span>}
+          </div>
+        </div>
+        <details className="group min-w-0 self-start rounded-xl border border-line">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
+            <span className="text-ink-2">Show this call as an API request</span>
+            <ChevronDown className="size-4 text-mute transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-line p-3">
+            <div className="mb-1.5 flex items-center justify-end">
+              <button onClick={copy} className="inline-flex items-center gap-1 text-xs text-info hover:underline">
+                {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <pre className="scroll-thin mono whitespace-pre overflow-x-auto rounded-xl bg-ink p-3 text-[12px] leading-relaxed text-white/90">{curl}</pre>
+          </div>
+        </details>
+      </div>
+    </Panel>
   );
 }
 
@@ -362,9 +455,11 @@ function GaugeCard({ msgs }: { msgs: FeedMessage[] }) {
       <div className="mt-1 flex justify-end">
         <Spark values={lv} w={130} h={28} />
       </div>
-      <Badge tone={SOURCE_TONE[last.source]} className="mt-1">
-        {SOURCE_LABEL[last.source]}
-      </Badge>
+      {last.source !== "drill" && last.source !== "synthetic" && (
+        <Badge tone={SOURCE_TONE[last.source]} className="mt-1">
+          {SOURCE_LABEL[last.source]}
+        </Badge>
+      )}
     </div>
   );
 }
@@ -386,7 +481,7 @@ function PriorityBoard({ rows, recs, onPick, onWhy }: { rows: PriorityRow[]; rec
   }, [rows]);
   const waiting = rows.filter((r) => r.state !== "assigned").length;
   return (
-    <Panel title="Priority board" sub={`${rows.length} open · ${waiting} waiting · ranked by the engine (urgency → deadline → confidence)`} className="h-[72vh] min-h-[420px]" bodyClass="flex min-h-0 flex-col">
+    <Panel title="Who is helped first" sub={`${rows.length} open · ${waiting} waiting`} className="h-[72vh] min-h-[420px]" bodyClass="flex min-h-0 flex-col">
       <ol className="scroll-thin min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2" aria-label="Incidents by priority">
         {rows.length === 0 && <li className="p-4 text-sm text-mute">No open incidents yet. Start the flood feed or send an SOS.</li>}
         {rows.map((r) => {
@@ -397,12 +492,12 @@ function PriorityBoard({ rows, recs, onPick, onWhy }: { rows: PriorityRow[]; rec
                 <span className="mono w-6 shrink-0 pt-0.5 text-[12px] font-semibold text-mute">#{r.rank}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-1.5">
-                    <span className="mono text-[13px] font-semibold">{r.incident}</span>
+                    <span className="text-sm font-semibold">{r.neighbourhood}</span>
                     <span className="inline-flex size-4 items-center justify-center rounded text-[10px] font-bold text-white" style={{ background: URGENCY_COLOR(r.urgency) }}>
                       {r.urgency}
                     </span>
                     <span className="text-[12px] text-ink-2">
-                      {r.unassigned}/{r.people} people waiting · {r.neighbourhood}
+                      {r.unassigned}/{r.people} waiting · {r.incident}
                     </span>
                     {mv ? (
                       <span className={cx("mono inline-flex items-center text-[10.5px] font-semibold", mv > 0 ? "text-ok" : "text-crit")}>
@@ -411,8 +506,9 @@ function PriorityBoard({ rows, recs, onPick, onWhy }: { rows: PriorityRow[]; rec
                       </span>
                     ) : null}
                   </span>
-                  <span className="mono mt-0.5 block text-[10.5px] text-mute">
-                    confidence {r.confidence.toFixed(2)} · {r.reports} report{r.reports === 1 ? "" : "s"} ({r.sources.join(", ")}){r.contradicted ? " · contradicted" : ""} · deadline {r.deadline_in >= 0 ? `in ${r.deadline_in} min` : `${-r.deadline_in} min ago`}
+                  <span className="mt-0.5 block text-xs text-mute">
+                    {r.deadline_in >= 0 ? `Help needed within ${r.deadline_in} min` : `${-r.deadline_in} min overdue`}
+                    {r.contradicted ? " · reports conflict" : ""}
                   </span>
                   {r.assigned.map((a) => (
                     <span key={a.resource} className="mt-1 block text-[12px] text-ok">
@@ -545,7 +641,7 @@ function ChangesCard({ msg, delta, history, selected, onSelect, onWhy }: { msg: 
 // ------------------------------------------------------------------ incoming messages
 function FeedStream({ feed }: { feed: FeedMessage[] }) {
   return (
-    <Panel title="Incoming feed" sub={`${feed.length} messages`} className="min-h-0 flex-1" bodyClass="scroll-thin min-h-0 overflow-y-auto">
+    <Panel title="Incoming messages" sub={`${feed.length} messages`} className="min-h-0 flex-1" bodyClass="scroll-thin min-h-0 overflow-y-auto">
       <ul className="divide-y divide-line" aria-live="polite">
         {feed.length === 0 && <li className="p-3 text-sm text-mute">Nothing received yet.</li>}
         {[...feed].reverse().slice(0, 120).map((m) => (
@@ -554,7 +650,7 @@ function FeedStream({ feed }: { feed: FeedMessage[] }) {
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-1.5">
                 <span className="font-medium capitalize">{m.type}</span>
-                <Badge tone={SOURCE_TONE[m.source]}>{m.source}</Badge>
+                {m.source !== "drill" && m.source !== "synthetic" && <Badge tone={SOURCE_TONE[m.source]}>{m.source}</Badge>}
                 <span className="mono text-[10.5px] text-mute">
                   #{m.seq} · t={m.tick}
                   {m.time ? ` · ${fmtT(m.time)}` : ""}
@@ -630,13 +726,6 @@ function ApprovalQueue({ frame, inject, openDecision, onFocus }: { frame: Frame;
                   </div>
                   <div className="mt-0.5 text-[12.5px] text-ink-2">
                     {r.people} people{inc ? ` · urgency ${inc.urgency}` : ""} · camp {r.shelter} · pickup {r.eta_pickup} min · total {r.eta_total} min
-                  </div>
-                  <div className="mono mt-1 flex gap-2 text-[10.5px] text-mute">
-                    <span>cost {r.cost.toFixed(3)}</span>
-                    <span>T {r.components.T.toFixed(2)}</span>
-                    <span>R {r.components.R.toFixed(2)}</span>
-                    <span>U {r.components.U.toFixed(2)}</span>
-                    <span>F {r.components.F.toFixed(2)}</span>
                   </div>
                   {r.why && <div className="mt-1.5 line-clamp-3 text-[11.5px] leading-snug text-ink-2">{r.why}</div>}
                 </button>

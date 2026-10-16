@@ -15,9 +15,9 @@ export function ActivityFeed({ limit = 140, compact }: { limit?: number; compact
   return (
     <div className="flex h-full min-h-0 flex-col">
       {!compact && (
-        <div className="scroll-thin flex gap-1 overflow-x-auto border-b border-line px-3 py-2">
+        <div className="flex flex-wrap gap-1 border-b border-line px-3 py-2">
           {CATS.map((c) => (
-            <button key={c} onClick={() => setCat(c)} className={cx("mono shrink-0 rounded-full px-2 py-0.5 text-[10.5px] uppercase", cat === c ? "bg-ink text-white" : "text-mute hover:bg-black/[0.05]")}>
+            <button key={c} onClick={() => setCat(c)} className={cx("shrink-0 rounded-full px-2.5 py-1 text-xs capitalize", cat === c ? "bg-ink text-white" : "text-mute hover:bg-black/[0.05]")}>
               {c}
             </button>
           ))}
@@ -44,15 +44,16 @@ function FeedRow({ a, onRef }: { a: AuditRecord; onRef: (k: string, v: string) =
     <li className="fade-in flex gap-2.5 px-3 py-2">
       <span className={cx("mt-1.5 size-1.5 shrink-0 rounded-full", SEV[a.severity])} />
       <div className="min-w-0 flex-1">
-        <div className="mono flex items-center gap-1.5 text-[10.5px] text-faint">
-          <span>t={a.tick}</span>
-          <span className="uppercase">{a.category}</span>
+        <div className="flex items-center gap-1.5 text-xs text-faint">
+          <span>Minute {a.tick}</span>
+          <span>·</span>
+          <span className="capitalize">{a.category}</span>
         </div>
         <div className={cx("text-[12.5px] leading-snug", a.severity === "critical" ? "text-crit" : "text-ink-2")}>{a.message}</div>
         {refs.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {refs.map(([k, v]) => (
-              <button key={k} onClick={() => onRef(k, v)} className="mono rounded border border-line px-1 text-[10px] text-mute hover:border-info hover:text-info">
+              <button key={k} onClick={() => onRef(k, v)} className="mono rounded border border-line px-1.5 py-0.5 text-[11px] text-mute hover:border-info hover:text-info">
                 {k === "decision" ? "why? " : ""}
                 {v}
               </button>

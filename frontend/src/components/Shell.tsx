@@ -1,23 +1,22 @@
 import { NavLink, useLocation } from "react-router-dom";
-import { CircleAlert, CircleCheck, Info, Pause, Play, RotateCcw, SkipForward, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, CircleAlert, CircleCheck, Info, Pause, Play, RotateCcw, Settings2, SkipForward, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useSim } from "../store/sim";
 import { clock, STRATEGY_LABEL } from "../lib/format";
 import { Badge, Button, cx, Segmented } from "./ui";
 import type { Strategy } from "../types";
 
+// Decision Lab, Arena, Replay and Safety are hidden from the nav for now; their routes still work.
 const NAV = [
-  { to: "/judge", label: "Judge Mode" },
+  { to: "/judge", label: "Demo" },
   { to: "/live", label: "Live ops" },
   { to: "/command", label: "Command" },
-  { to: "/dispatch", label: "Fleet" },
   { to: "/agents", label: "Negotiation" },
-  { to: "/scenarios", label: "Chaos Lab" },
-  { to: "/decision-lab", label: "Decision Lab" },
-  { to: "/arena", label: "Arena" },
-  { to: "/replay", label: "Replay" },
-  { to: "/safety", label: "Safety" },
   { to: "/reports", label: "Report" },
+];
+const NAV_MORE = [
+  { to: "/dispatch", label: "Fleet" },
+  { to: "/scenarios", label: "Chaos Lab" },
   { to: "/data", label: "Data & evidence" },
 ];
 
@@ -38,33 +37,45 @@ export function TopBar() {
   const conn = useSim((s) => s.conn);
   const world = useSim((s) => s.world);
   const loc = useLocation();
+  const [more, setMore] = useState(false);
+  const moreActive = NAV_MORE.some((n) => loc.pathname.startsWith(n.to));
+  const pill = (active: boolean) => cx("flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-sm transition", active ? "bg-ink font-medium text-white" : "text-ink-2 hover:bg-black/[0.05] hover:text-ink");
   return (
     <div className="no-print sticky top-0 z-30">
-      <div className="mono bg-gradient-to-r from-[#06b6d4] via-[#22d3ee] to-[#06b6d4] py-1 text-center text-[11px] font-medium tracking-wide text-ink">
-        {world?.map.real
-          ? `${world.map.name} · real roads & terrain (OpenStreetMap, Copernicus DEM) · floods and incidents simulated · not an operational dispatch system`
-          : "synthetic simulation · research & education only · not an operational dispatch system"}
-      </div>
-      <header className="border-b border-line bg-paper/85 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-[1680px] items-center gap-4 px-4">
+      <header className="border-b border-line bg-paper/90 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[1680px] items-center gap-5 px-5">
           <NavLink to="/command" className="shrink-0">
             <Logo />
           </NavLink>
-          <nav className="scroll-thin flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-            {NAV.map((n) => {
-              const active = loc.pathname.startsWith(n.to);
-              return (
-                <NavLink key={n.to} to={n.to} className={cx("flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[13.5px] transition", active ? "bg-white text-ink shadow-[0_0_0_1px_var(--color-line-2)]" : "text-ink-2 hover:text-ink")}>
-                  {active && <span className="size-1.5 rounded-full bg-info" />}
-                  {n.label}
-                </NavLink>
-              );
-            })}
+          <nav className="flex min-w-0 flex-1 items-center gap-1">
+            {NAV.map((n) => (
+              <NavLink key={n.to} to={n.to} className={pill(loc.pathname.startsWith(n.to))}>
+                {n.label}
+              </NavLink>
+            ))}
+            <div className="relative" onMouseLeave={() => setMore(false)}>
+              <button onClick={() => setMore((o) => !o)} className={cx(pill(moreActive), "gap-1")} aria-expanded={more}>
+                More
+                <ChevronDown className="size-3.5" />
+              </button>
+              {more && (
+                <div className="panel fade-in absolute left-0 z-40 mt-1 w-48 p-1">
+                  {NAV_MORE.map((n) => (
+                    <NavLink key={n.to} to={n.to} onClick={() => setMore(false)} className={({ isActive }) => cx("block rounded-lg px-3 py-2 text-sm", isActive ? "bg-black/[0.05] font-medium" : "hover:bg-black/[0.04]")}>
+                      {n.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
           </nav>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className={cx("mono inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]", conn === "live" ? "border-ok/25 bg-ok-soft text-ok" : conn === "offline" ? "border-crit/25 bg-crit-soft text-crit" : "border-warn/25 bg-warn-soft text-warn")}>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="hidden text-xs text-mute md:inline" title="Floods and incidents are simulated. Not an operational dispatch system.">
+              {world?.map.real ? `${world.map.name} · simulated incidents` : "Simulation"}
+            </span>
+            <span className={cx("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", conn === "live" ? "border-ok/25 bg-ok-soft text-ok" : conn === "offline" ? "border-crit/25 bg-crit-soft text-crit" : "border-warn/25 bg-warn-soft text-warn")}>
               <span className={cx("size-1.5 rounded-full bg-current", conn !== "live" && "animate-pulse")} />
-              {conn === "live" ? "live" : conn}
+              {conn === "live" ? "Connected" : conn}
             </span>
           </div>
         </div>
@@ -81,54 +92,70 @@ export function SimControls({ extra }: { extra?: React.ReactNode }) {
   const control = useSim((s) => s.control);
   const setSpeed = useSim((s) => s.setSpeed);
   const busy = useSim((s) => s.busy);
+  const [details, setDetails] = useState(false);
   if (!sim || !frame) return null;
   const running = sim.status === "running";
   const pctDone = Math.min(100, (frame.tick / sim.duration) * 100);
   return (
-    <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2">
-      <div className="flex items-center gap-3 pr-1">
-        <div>
-          <div className="label">mission clock</div>
-          <div className="mono num text-[17px] font-semibold tracking-tight">{clock(frame.tick)}</div>
-        </div>
-        <div className="hidden w-28 sm:block">
-          <div className="mono flex justify-between text-[10.5px] text-mute">
-            <span>t={frame.tick}</span>
-            <span>{sim.duration}</span>
-          </div>
-          <div className="mt-1 h-1 overflow-hidden rounded-full bg-black/[0.07]">
-            <div className="h-full bg-ink transition-all" style={{ width: `${pctDone}%` }} />
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5">
-        {running ? (
-          <Button variant="solid" icon={<Pause className="size-4" />} onClick={() => control("pause")} loading={busy.pause}>
-            Pause
-          </Button>
-        ) : (
-          <Button variant="solid" icon={<Play className="size-4" />} onClick={() => control("start")} disabled={frame.finished} loading={busy.start}>
-            {frame.tick === 0 ? "Start" : "Resume"}
-          </Button>
-        )}
-        <Button icon={<SkipForward className="size-4" />} onClick={() => control("step", 1)} disabled={running || frame.finished} loading={busy.step} title="Advance one tick (1 simulated minute)">
-          Step
+    <div className="panel relative flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2.5">
+      {running ? (
+        <Button variant="solid" icon={<Pause className="size-4" />} onClick={() => control("pause")} loading={busy.pause}>
+          Pause
         </Button>
-        <Button variant="ghost" icon={<RotateCcw className="size-4" />} onClick={() => control("reset")} loading={busy.reset} title="Reset this run to t=0">
-          Reset
+      ) : (
+        <Button variant="solid" icon={<Play className="size-4" />} onClick={() => control("start")} disabled={frame.finished} loading={busy.start}>
+          {frame.tick === 0 ? "Start" : "Resume"}
+        </Button>
+      )}
+      <div className="flex items-center gap-3">
+        <div className="mono num text-[17px] font-semibold tracking-tight">{clock(frame.tick)}</div>
+        <div className="hidden h-1.5 w-32 overflow-hidden rounded-full bg-black/[0.07] sm:block" title={`${frame.tick} of ${sim.duration} minutes`}>
+          <div className="h-full bg-ink transition-all" style={{ width: `${pctDone}%` }} />
+        </div>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-mute">
+        Speed
+        <select value={sim.speed} onChange={(e) => setSpeed(Number(e.target.value))} className="h-8 rounded-lg border border-line-2 bg-white px-2 text-sm text-ink outline-none focus:border-info">
+          {SPEEDS.map((s) => (
+            <option key={s} value={s}>
+              {s}×
+            </option>
+          ))}
+        </select>
+      </label>
+      <Badge tone={running ? "ok" : sim.status === "finished" ? "ink" : "neutral"} dot>
+        {sim.status}
+      </Badge>
+      <div className="ml-auto flex items-center gap-2">
+        {extra}
+        <Button variant="ghost" size="sm" icon={<Settings2 className="size-3.5" />} onClick={() => setDetails((v) => !v)} aria-expanded={details}>
+          Run details
         </Button>
       </div>
-      <Segmented size="sm" value={sim.speed} options={SPEEDS.map((s) => ({ value: s, label: `${s}×` }))} onChange={(v) => setSpeed(v)} />
-      <div className="flex items-center gap-1.5">
-        <Badge tone={running ? "ok" : sim.status === "finished" ? "ink" : "neutral"} dot>
-          {sim.status}
-        </Badge>
-        <Badge tone="info">{STRATEGY_LABEL[sim.strategy]}</Badge>
-        <span className="mono hidden text-[11px] text-mute lg:inline">
-          {sim.scenario_name} · seed {sim.seed} · v{frame.version}
-        </span>
-      </div>
-      <div className="ml-auto flex items-center gap-2">{extra}</div>
+      {details && (
+        <div className="panel fade-in absolute top-full right-0 z-40 mt-2 w-80 space-y-3 p-4 text-sm">
+          <div className="grid grid-cols-2 gap-y-1.5">
+            <span className="text-mute">Scenario</span>
+            <span className="text-right">{sim.scenario_name}</span>
+            <span className="text-mute">Strategy</span>
+            <span className="text-right">{STRATEGY_LABEL[sim.strategy]}</span>
+            <span className="text-mute">Seed</span>
+            <span className="mono text-right">{sim.seed}</span>
+            <span className="text-mute">Minute</span>
+            <span className="mono text-right">
+              {frame.tick} / {sim.duration}
+            </span>
+          </div>
+          <div className="flex gap-2 border-t border-line pt-3">
+            <Button size="sm" icon={<SkipForward className="size-3.5" />} onClick={() => control("step", 1)} disabled={running || frame.finished} loading={busy.step} title="Advance one simulated minute">
+              Step 1 min
+            </Button>
+            <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />} onClick={() => control("reset")} loading={busy.reset} title="Reset this run to minute 0">
+              Reset run
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

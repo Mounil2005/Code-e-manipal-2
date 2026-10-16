@@ -4,7 +4,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { useSim, type Layers } from "../store/sim";
 import { CityMap, MapLegend } from "../components/CityMap";
 import { RiverCard } from "../components/RiverCard";
-import { ChaosButtons } from "../components/Chaos";
+import { ChaosMenu } from "../components/Chaos";
 import { ActivityFeed } from "../components/Feed";
 import { SelectionPanel } from "../components/SelectionPanel";
 import { NewRunMenu, SimControls } from "../components/Shell";
@@ -24,6 +24,7 @@ export default function Command() {
   const [tab, setTab] = useState<"detail" | "feed">("feed");
   const [sos, setSos] = useState({ people: 4, urgency: 4 });
   const [showLayers, setShowLayers] = useState(false);
+  const [more, setMore] = useState(false);
 
   const incidents = useMemo(() => {
     if (!frame) return [];
@@ -38,11 +39,11 @@ export default function Command() {
   const m = frame.metrics;
 
   return (
-    <div className="flex flex-col gap-3 p-3 lg:h-[calc(100vh-88px)] lg:min-h-[720px]">
+    <div className="flex flex-col gap-4 p-5 lg:h-[calc(100vh-56px)] lg:min-h-[720px]">
       <SimControls
         extra={
           <>
-            <ChaosButtons />
+            <ChaosMenu />
             <NewRunMenu />
           </>
         }
@@ -50,14 +51,14 @@ export default function Command() {
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-[300px_1fr_360px]">
         {/* incident queue */}
         <Panel
-          title="incident queue"
-          sub={`${m.open_incidents} open · ${frame.incidents.filter((i) => isOpen(i) && i.unassigned > 0).length} uncovered`}
+          title="Requests"
+          sub={`${m.open_incidents} open · ${frame.incidents.filter((i) => isOpen(i) && i.unassigned > 0).length} need a unit`}
           right={<Badge tone="neutral">{incidents.length}</Badge>}
           bodyClass="flex flex-col"
           className="max-lg:h-80"
         >
           <div className="border-b border-line px-3 py-2">
-            <Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: "open", label: "Open" }, { value: "urgent", label: "Urgent" }, { value: "uncovered", label: "Uncovered" }, { value: "all", label: "All" }]} />
+            <Segmented size="sm" value={filter} onChange={setFilter} options={[{ value: "open", label: "Open" }, { value: "urgent", label: "Urgent" }, { value: "uncovered", label: "Need unit" }, { value: "all", label: "All" }]} />
           </div>
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
             {incidents.length === 0 ? (
@@ -78,17 +79,16 @@ export default function Command() {
                       {i.urgency}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="mono text-[12.5px] font-semibold">{i.id}</span>
-                        <Badge tone={INCIDENT_TONE[i.status]}>{statusLabel(i.status)}</Badge>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{i.people} people</span>
                         {late && <Badge tone="crit">late</Badge>}
+                        {!late && i.unassigned > 0 && <Badge tone="warn">needs a unit</Badge>}
                       </div>
                       <div className="mt-0.5 truncate text-xs text-mute">
-                        {i.people} waiting{i.unassigned ? ` · ${i.unassigned} uncovered` : ""} · {i.node} · conf {fmt(i.confidence, 2)}
+                        {i.id} · {i.assigned.length > 0 ? `→ ${i.assigned.join(", ")}` : statusLabel(i.status)}
                       </div>
-                      {i.assigned.length > 0 && <div className="mono mt-0.5 text-[10.5px] text-info">→ {i.assigned.join(", ")}</div>}
                     </div>
-                    <span className="mono shrink-0 text-[10.5px] text-faint">t{i.deadline}</span>
+                    <span className="mono shrink-0 text-xs text-faint">by {i.deadline}</span>
                   </button>
                 );
               })
@@ -165,7 +165,7 @@ export default function Command() {
         <Panel
           className="max-lg:h-[520px]"
           title={<Segmented size="sm" value={tab} onChange={setTab} options={[{ value: "feed", label: "Agent activity" }, { value: "detail", label: "Inspector" }]} />}
-          right={<span className="mono text-[10.5px] text-faint">{audit.length} records</span>}
+          right={<span className="text-xs text-faint">{audit.length} records</span>}
           bodyClass="flex flex-col"
         >
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">{tab === "feed" ? <ActivityFeed /> : <SelectionPanel />}</div>
@@ -173,17 +173,24 @@ export default function Command() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-[repeat(8,1fr)_1.6fr]">
-        <Kpi label="people rescued" value={m.people_rescued} hint={`${m.people_in_transit} in transit`} tone="ok" />
-        <Kpi label="still waiting" value={m.unmet_people} hint={`${m.open_incidents} open incidents`} tone={m.unmet_people > 20 ? "warn" : undefined} />
-        <Kpi label="mean time to service" value={fmt(m.mean_time_to_service)} unit="min" hint={`median ${fmt(m.median_time_to_service)}`} />
-        <Kpi label="deadline misses" value={m.deadline_misses} hint={`of ${m.urgent_incidents} urgent`} tone={m.deadline_misses ? "crit" : undefined} />
-        <Kpi label="utilisation" value={pct(m.utilisation)} hint={`${m.idle_with_demand_ticks} idle-w/-demand`} />
-        <Kpi label="fairness (Jain)" value={fmt(m.fairness_jain, 2)} hint="1.0 = even waits" tone="info" />
-        <Kpi label="reroutes / reassign" value={`${m.reroutes}/${m.reassignments}`} hint={`${m.cancellations} cancellations`} />
-        <Kpi label="safety" value={m.route_violations + m.invariant_violations === 0 ? "0 viol." : m.route_violations + m.invariant_violations} hint={`${m.safety_rejections} rejected · ${m.blocked_moves} blocked`} tone={m.route_violations + m.invariant_violations ? "crit" : "ok"} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-[repeat(4,1fr)_1.6fr_auto]">
+        <Kpi label="People rescued" value={m.people_rescued} hint={`${m.people_in_transit} on the way`} tone="ok" />
+        <Kpi label="Still waiting" value={m.unmet_people} hint={`${m.open_incidents} open requests`} tone={m.unmet_people > 20 ? "warn" : undefined} />
+        <Kpi label="Deadlines missed" value={m.deadline_misses} hint={`of ${m.urgent_incidents} urgent`} tone={m.deadline_misses ? "crit" : undefined} />
+        <Kpi label="Safety violations" value={m.route_violations + m.invariant_violations} hint={`${m.safety_rejections} unsafe plans blocked`} tone={m.route_violations + m.invariant_violations ? "crit" : "ok"} />
         <MiniChart />
+        <Button variant="ghost" size="sm" className="self-center" onClick={() => setMore((v) => !v)}>
+          {more ? "Fewer metrics" : "More metrics"}
+        </Button>
       </div>
+      {more && (
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <Kpi label="Average wait" value={fmt(m.mean_time_to_service)} unit="min" hint={`median ${fmt(m.median_time_to_service)}`} />
+          <Kpi label="Fleet utilisation" value={pct(m.utilisation)} hint={`${m.idle_with_demand_ticks} idle minutes with demand`} />
+          <Kpi label="Fairness" value={fmt(m.fairness_jain, 2)} hint="1.0 = everyone waits equally" tone="info" />
+          <Kpi label="Re-plans" value={`${m.reroutes} reroutes · ${m.reassignments} reassigned`} hint={`${m.cancellations} cancellations`} />
+        </div>
+      )}
     </div>
   );
 }
@@ -208,7 +215,7 @@ function MiniChart() {
   }, [frame]);
   return (
     <div className="panel col-span-2 px-3 pt-2 md:col-span-4 xl:col-span-1">
-      <div className="label">rescued vs waiting</div>
+      <div className="label">Rescued vs waiting</div>
       <div className="h-[52px]">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={series} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>

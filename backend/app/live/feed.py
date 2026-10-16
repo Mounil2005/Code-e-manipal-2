@@ -337,14 +337,17 @@ def _poisson(rng: random.Random, lam: float) -> int:
 
 # ---------------------------------------------------------------------- source plans
 def drill_plan(map_id: str) -> list[dict[str, Any]]:
-    """The real hourly August 2018 gauge record at the map's CWC station: 14 Aug 12:00 (the main
-    rise) to 17 Aug 12:00 (after the peak)."""
-    path = DATA / f"cwc_2018__{map_id}.json"
-    if not path.exists():
-        raise FeedError(f"no 2018 gauge record for map {map_id}")
+    """The map's reference flood as CWC recorded it, one hourly gauge reading at a time (Kerala:
+    14 Aug 12:00 to 17 Aug 12:00, 2018; Mahanadi delta: 13 to 19 Aug 2022). Upstream dam reports
+    ride along at the hour they were filed."""
+    cfg = STATIONS.get(map_id, {}).get("drill")
+    path = DATA / f"cwc_{cfg['year']}__{map_id}.json" if cfg else None
+    if not path or not path.exists():
+        raise FeedError(f"no past flood gauge record for map {map_id}")
     d = json.loads(path.read_text(encoding="utf-8"))
-    rows = [r for r in d["readings"] if "2018-08-14T12:00" <= r["time"] <= "2018-08-17T12:00"]
-    rain = {}
+    lo, hi = d.get("window") or cfg["window"]
+    rows = [r for r in d["readings"] if lo <= r["time"] <= hi]
+    rain: dict[str, float] = {}
     ev = DATA / f"kerala_2018__{map_id}.json"
     if ev.exists():
         e = json.loads(ev.read_text(encoding="utf-8"))
@@ -352,15 +355,32 @@ def drill_plan(map_id: str) -> list[dict[str, Any]]:
         for i, mm in enumerate(e.get("rain_mm_h", [])):
             h = f"2018-08-{14 + i // 24:02d}T{i % 24:02d}:00"
             rain[h] = mm
+    else:
+        # the station's own daily rain (filed 08:30, covering the previous 24 h), spread evenly
+        for x in d.get("rain", []):
+            for r in rows:
+                if r["time"][:10] == x["time"][:10]:
+                    rain[r["time"]] = x["mm"] / 24
     peak_rain = max(rain.values()) if rain else 1.0
-    return [{"time": r["time"], "level_m": r["level_m"], "station": d["station"]["name"], "rain_factor": 0.5 + (rain.get(r["time"], 0.0) / peak_rain if peak_rain else 0.0)} for r in rows]
+    dam_at: dict[str, list[dict[str, Any]]] = {}
+    for dm in d.get("dams", []):
+        for o in dm.get("outflow", []):
+            hour = o["time"][:13] + ":00"
+            if lo <= hour <= hi:
+                dam_at.setdefault(hour, []).append({"dam": dm["name"], "outflow_m3s": o["m3s"], "time": o["time"]})
+    return [
+        {"time": r["time"], "level_m": r["level_m"], "station": d["station"]["name"], "rain_factor": 0.5 + (rain.get(r["time"], 0.0) / peak_rain if peak_rain else 0.0)}
+        | ({"interpolated": True} if r.get("interpolated") else {})
+        | ({"dams": dam_at[r["time"]]} if r["time"] in dam_at else {})
+        for r in rows
+    ]
 
 
 def synthetic_plan(map_id: str, p: dict[str, Any]) -> list[dict[str, Any]]:
     """A parameterised flood: rise, hold at the peak, recede (hourly readings)."""
     g = STATIONS.get(map_id, {}).get("gauge") or {"base_m": 0.0, "peak_m": 1.0, "name": "synthetic gauge"}
     rise, hold, fall = int(p.get("rise_hours", 24)), int(p.get("hold_hours", 8)), int(p.get("fall_hours", 24))
-    peak = max(0.05, min(1.3, float(p.get("peak", 0.9))))  # fraction of the 2018 peak
+    peak = max(0.05, min(1.3, float(p.get("peak", 0.9))))  # fraction of the reference flood's peak
     out = []
     for h in range(rise + hold + fall):
         if h < rise:

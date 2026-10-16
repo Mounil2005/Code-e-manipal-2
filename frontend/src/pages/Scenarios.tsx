@@ -86,80 +86,119 @@ export default function Scenarios() {
     inject(t, p, `${t.toLowerCase().replace(/_/g, " ")} ${target}`);
   };
 
+  const paramKey = (t: string) => (t === "CLOSE_EDGE" ? "edge_id" : t === "SHELTER_CAPACITY" ? "shelter_id" : t === "FLOOD_SURGE" ? "delta" : "resource_id");
+
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-5 p-5">
       <SimControls />
-      <PageHeader eyebrow="scenario & chaos lab" title="Design the storm. Then break the plan." sub="Configure a reproducible scenario (all values are seeded and synthetic), or inject failures into the live run at any tick. Each injected failure is tracked until every affected request is covered again." />
-      <div className="grid gap-3 xl:grid-cols-[1fr_440px]">
-        <Panel title="scenario editor" sub="Launching creates a new seeded run with these exact parameters" right={<Segmented size="sm" value={strategy} onChange={setStrategy} options={(["decentralized", "centralized", "greedy"] as Strategy[]).map((s) => ({ value: s, label: STRATEGY_LABEL[s] }))} />}>
+      <PageHeader eyebrow="chaos lab" title="Chaos Lab" sub="Design the storm on the left. Break the live run and watch it recover on the right." />
+
+      <div className="grid items-start gap-5 xl:grid-cols-[1fr_420px]">
+        {/* ---------------- scenario editor: every parameter visible ---------------- */}
+        <Panel title="Design the storm" sub="Launching creates a new seeded run with exactly these settings" right={<Segmented size="sm" value={strategy} onChange={setStrategy} options={(["decentralized", "centralized", "greedy"] as Strategy[]).map((s) => ({ value: s, label: STRATEGY_LABEL[s] }))} />}>
           {!cfg ? (
             <Empty title="Loading presets…" />
           ) : (
-            <div className="space-y-5 p-4">
-              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                {presets.map((p) => (
-                  <button key={p.key} onClick={() => pick(p.key)} className={cx("rounded-xl border p-3 text-left transition", base === p.key ? "border-ink bg-ink text-white" : "border-line bg-white hover:border-ink/30")}>
-                    <div className="text-[13px] font-semibold">{p.name}</div>
-                    <div className={cx("mt-1 line-clamp-3 text-[11px] leading-snug", base === p.key ? "text-white/70" : "text-mute")}>{p.description}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="grid gap-x-5 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Slider label="flood severity" v={cfg.flood_severity} min={0.4} max={2} step={0.05} on={(v) => set("flood_severity", v)} fmt={(v) => `${v.toFixed(2)}×`} />
-                <Slider label="flood peak tick" v={cfg.flood_peak_tick} min={20} max={150} step={5} on={(v) => set("flood_peak_tick", v)} />
-                <Slider label="incident arrivals" v={cfg.arrival_incidents} min={0} max={40} step={1} on={(v) => set("arrival_incidents", v)} hint={`+${cfg.initial_incidents} at t=0`} />
-                <Slider label="rescue boats" v={cfg.boats} min={0} max={7} step={1} on={(v) => set("boats", v)} />
-                <Slider label="ground teams" v={cfg.ground_units} min={0} max={6} step={1} on={(v) => set("ground_units", v)} />
-                <Slider label="duration (min)" v={cfg.duration} min={60} max={360} step={10} on={(v) => set("duration", v)} />
-                {cfg.shelter_capacity.map((c, i) => (
-                  <Slider key={i} label={`shelter S${i + 1} capacity`} v={c} min={0} max={120} step={1} on={(v) => set("shelter_capacity", cfg.shelter_capacity.map((x, j) => (j === i ? v : x)))} />
-                ))}
-                <Slider label="report noise" v={cfg.report_noise} min={0} max={1} step={0.05} on={(v) => set("report_noise", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="duplicate reports" v={cfg.duplicate_rate} min={0} max={1} step={0.05} on={(v) => set("duplicate_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="delayed reports" v={cfg.delayed_report_rate} min={0} max={1} step={0.05} on={(v) => set("delayed_report_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="false alarms" v={cfg.false_alarm_rate} min={0} max={0.5} step={0.02} on={(v) => set("false_alarm_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="contradictory reports" v={cfg.contradiction_rate} min={0} max={0.6} step={0.02} on={(v) => set("contradiction_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="communication delay" v={cfg.comm_delay} min={0} max={10} step={1} on={(v) => set("comm_delay", v)} fmt={(v) => `${v} tick${v === 1 ? "" : "s"}`} />
-                <Field label="seed">
-                  <input className={inputCls} type="number" value={cfg.seed} onChange={(e) => set("seed", Number(e.target.value))} />
-                </Field>
-                <Field label="priority policy">
-                  <select className={inputCls} value={cfg.policy} onChange={(e) => set("policy", e.target.value)}>
-                    {["balanced", "fastest", "urgency_first", "equity"].map((p) => (
-                      <option key={p}>{p}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              <div>
-                <div className="label mb-2">neighbourhood priority weights (1.0 = neutral)</div>
-                <div className="grid gap-x-5 gap-y-2 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="space-y-7 p-5">
+              <section>
+                <h3 className="mb-3 text-sm font-semibold">Start from a preset</h3>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {presets.map((p) => (
+                    <button key={p.key} onClick={() => pick(p.key)} className={cx("rounded-xl border p-3.5 text-left transition", base === p.key ? "border-ink bg-ink text-white" : "border-line bg-white hover:border-ink/30")}>
+                      <div className="text-sm font-semibold">{p.name}</div>
+                      <div className={cx("mt-1 line-clamp-3 text-xs leading-snug", base === p.key ? "text-white/70" : "text-mute")}>{p.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 text-sm font-semibold">Flood</h3>
+                <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Slider label="Flood severity" v={cfg.flood_severity} min={0.4} max={2} step={0.05} on={(v) => set("flood_severity", v)} fmt={(v) => `${v.toFixed(2)}×`} />
+                  <Slider label="Flood peak (minute)" v={cfg.flood_peak_tick} min={20} max={150} step={5} on={(v) => set("flood_peak_tick", v)} />
+                  <Slider label="Duration (min)" v={cfg.duration} min={60} max={360} step={10} on={(v) => set("duration", v)} />
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 text-sm font-semibold">Demand and fleet</h3>
+                <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Slider label="Incoming requests" v={cfg.arrival_incidents} min={0} max={40} step={1} on={(v) => set("arrival_incidents", v)} hint={`+${cfg.initial_incidents} at start`} />
+                  <Slider label="Rescue boats" v={cfg.boats} min={0} max={7} step={1} on={(v) => set("boats", v)} />
+                  <Slider label="Ground teams" v={cfg.ground_units} min={0} max={6} step={1} on={(v) => set("ground_units", v)} />
+                  {cfg.shelter_capacity.map((c, i) => (
+                    <Slider key={i} label={`Camp S${i + 1} capacity`} v={c} min={0} max={120} step={1} on={(v) => set("shelter_capacity", cfg.shelter_capacity.map((x, j) => (j === i ? v : x)))} />
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 text-sm font-semibold">Information quality</h3>
+                <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Slider label="Report noise" v={cfg.report_noise} min={0} max={1} step={0.05} on={(v) => set("report_noise", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="Duplicate reports" v={cfg.duplicate_rate} min={0} max={1} step={0.05} on={(v) => set("duplicate_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="Delayed reports" v={cfg.delayed_report_rate} min={0} max={1} step={0.05} on={(v) => set("delayed_report_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="False alarms" v={cfg.false_alarm_rate} min={0} max={0.5} step={0.02} on={(v) => set("false_alarm_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="Contradictory reports" v={cfg.contradiction_rate} min={0} max={0.6} step={0.02} on={(v) => set("contradiction_rate", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
+                  <Slider label="Communication delay" v={cfg.comm_delay} min={0} max={10} step={1} on={(v) => set("comm_delay", v)} fmt={(v) => `${v} min`} />
+                </div>
+              </section>
+
+              <section>
+                <h3 className="mb-3 text-sm font-semibold">Priorities</h3>
+                <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <Field label="Priority policy">
+                    <select className={inputCls} value={cfg.policy} onChange={(e) => set("policy", e.target.value)}>
+                      {["balanced", "fastest", "urgency_first", "equity"].map((p) => (
+                        <option key={p} value={p}>
+                          {p.replace(/_/g, " ")}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Random seed" hint="same seed = same run">
+                    <input className={inputCls} type="number" value={cfg.seed} onChange={(e) => set("seed", Number(e.target.value))} />
+                  </Field>
+                </div>
+                <div className="label mt-4 mb-2">Neighbourhood priority (1.0 = neutral)</div>
+                <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
                   {NB.map(([id, name]) => (
                     <Slider key={id} label={name} v={cfg.neighbourhood_priority[id] ?? 1} min={0.5} max={3} step={0.1} on={(v) => set("neighbourhood_priority", { ...cfg.neighbourhood_priority, [id]: v })} fmt={(v) => `${v.toFixed(1)}×`} />
                   ))}
                 </div>
-              </div>
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="label">scheduled events</div>
+              </section>
+
+              <section>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">Scheduled failures</h3>
                   <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => set("schedule", [...cfg.schedule, { tick: 30, type: "CLOSE_EDGE", params: { edge_id: "@critical", reason: "scheduled" } }])}>
-                    Add event
+                    Add failure
                   </Button>
                 </div>
                 {cfg.schedule.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-line-2 p-3 text-xs text-mute">No scheduled events — inject them live from the console instead.</div>
+                  <div className="rounded-lg border border-dashed border-line-2 p-3 text-sm text-mute">None scheduled. You can also inject failures live from the panel on the right.</div>
                 ) : (
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     {cfg.schedule.map((e, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="label">t=</span>
-                        <input className={cx(inputCls, "w-20")} type="number" value={e.tick} onChange={(ev) => set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, tick: Number(ev.target.value) } : x)))} />
-                        <select className={cx(inputCls, "w-48")} value={e.type} onChange={(ev) => set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, type: ev.target.value, params: defaultParams(ev.target.value) } : x)))}>
+                      <div key={i} className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm text-mute">At minute</span>
+                        <input className={"h-9 rounded-lg border border-line-2 bg-white px-2.5 text-sm outline-none focus:border-info w-20"} type="number" value={e.tick} onChange={(ev) => set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, tick: Number(ev.target.value) } : x)))} />
+                        <select className={"h-9 rounded-lg border border-line-2 bg-white px-2.5 text-sm outline-none focus:border-info w-52"} value={e.type} onChange={(ev) => set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, type: ev.target.value, params: defaultParams(ev.target.value) } : x)))}>
                           {SCHED_TYPES.map((t) => (
-                            <option key={t}>{t}</option>
+                            <option key={t} value={t}>
+                              {t.toLowerCase().replace(/_/g, " ")}
+                            </option>
                           ))}
                         </select>
-                        <input className={cx(inputCls, "mono text-xs")} value={JSON.stringify(e.params)} onChange={(ev) => { try { const p = JSON.parse(ev.target.value); set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, params: p } : x))); } catch { /* keep typing */ } }} />
+                        {e.type !== "TRIPLE_FAILURE" && (
+                          <input
+                            className={"h-9 rounded-lg border border-line-2 bg-white px-2.5 text-sm outline-none focus:border-info w-40"}
+                            aria-label="Target"
+                            value={String((e.params as Record<string, unknown>)[paramKey(e.type)] ?? "")}
+                            onChange={(ev) => set("schedule", cfg.schedule.map((x, j) => (j === i ? { ...x, params: { ...x.params, [paramKey(e.type)]: e.type === "FLOOD_SURGE" ? Number(ev.target.value) : ev.target.value } } : x)))}
+                          />
+                        )}
                         <button aria-label="Remove" className="text-faint hover:text-crit" onClick={() => set("schedule", cfg.schedule.filter((_, j) => j !== i))}>
                           <Trash2 className="size-4" />
                         </button>
@@ -167,9 +206,10 @@ export default function Scenarios() {
                     ))}
                   </div>
                 )}
-              </div>
-              <div className="flex items-center justify-end gap-2 border-t border-line pt-4">
-                <span className="text-xs text-mute">{world?.map.real ? `Real roads of ${world.map.name}; incidents and floods simulated, seeded and reproducible.` : "Synthetic, seeded and reproducible."}</span>
+              </section>
+
+              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-line pt-4">
+                <span className="text-xs text-mute">{world?.map.real ? `Real roads of ${world.map.name}; floods and incidents simulated and reproducible.` : "Synthetic and reproducible."}</span>
                 <Button variant="solid" icon={<Rocket className="size-4" />} loading={launching} onClick={launch}>
                   Launch scenario
                 </Button>
@@ -178,19 +218,22 @@ export default function Scenarios() {
           )}
         </Panel>
 
-        <div className="space-y-3">
-          <Panel title="live fault injection" sub={sim ? `into ${sim.scenario_name} at t=${frame?.tick}` : undefined}>
+        {/* ---------------- live fault injection + recovery ---------------- */}
+        <div className="space-y-5 xl:sticky xl:top-20">
+          <Panel title="Break the live run" sub={sim ? `Into ${sim.scenario_name} at minute ${frame?.tick}` : "Start a run first"}>
             <div className="space-y-4 p-4">
               <ChaosButtons layout="grid" />
               <div className="rounded-xl border border-line bg-wash p-3">
-                <div className="label mb-2">targeted injection</div>
-                <div className="flex gap-1.5">
-                  <select className={cx(inputCls, "flex-1")} value={manual.type} onChange={(e) => setManual({ type: e.target.value, target: targets[e.target.value]?.[0] ?? "" })}>
+                <div className="label mb-2">Target something specific</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <select className={"h-9 rounded-lg border border-line-2 bg-white px-2.5 text-sm outline-none focus:border-info min-w-0 flex-1"} value={manual.type} onChange={(e) => setManual({ type: e.target.value, target: targets[e.target.value]?.[0] ?? "" })}>
                     {Object.keys(targets).map((t) => (
-                      <option key={t}>{t}</option>
+                      <option key={t} value={t}>
+                        {t.toLowerCase().replace(/_/g, " ")}
+                      </option>
                     ))}
                   </select>
-                  <select className={cx(inputCls, "w-28")} value={target} onChange={(e) => setManual({ ...manual, target: e.target.value })}>
+                  <select className={"h-9 rounded-lg border border-line-2 bg-white px-2.5 text-sm outline-none focus:border-info w-24"} value={target} onChange={(e) => setManual({ ...manual, target: e.target.value })}>
                     {(targets[manual.type] ?? []).map((t) => (
                       <option key={t}>{t}</option>
                     ))}
@@ -202,22 +245,22 @@ export default function Scenarios() {
               </div>
             </div>
           </Panel>
-          <Panel title="disruptions & recovery" sub="Recovery = ticks until every affected request is covered again">
-            <div className="scroll-thin max-h-[420px] overflow-y-auto">
+
+          <Panel title="Recovery" sub="Minutes until every affected request is covered again">
+            <div className="scroll-thin max-h-[360px] overflow-y-auto">
               {disruptions.length === 0 ? (
-                <Empty title="No disruptions yet" body="Inject a failure; affected commitments and recovery time appear here." />
+                <Empty title="Nothing broken yet" body="Inject a failure; affected requests and recovery time appear here." />
               ) : (
                 <ul className="divide-y divide-line">
                   {[...disruptions].reverse().map((d) => (
-                    <li key={d.event} className="px-4 py-2.5 text-xs">
+                    <li key={d.event} className="px-4 py-3 text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="mono font-semibold">{d.event}</span>
-                        <Badge tone="warn">{d.type.replace(/_/g, " ").toLowerCase()}</Badge>
-                        <span className="mono text-mute">t={d.tick}</span>
+                        <span className="font-medium capitalize">{d.type.replace(/_/g, " ").toLowerCase()}</span>
+                        <span className="text-xs text-mute">minute {d.tick}</span>
                         <span className="ml-auto">{d.recovery === null ? <Badge tone="crit" dot>recovering</Badge> : <Badge tone="ok">recovered in {d.recovery} min</Badge>}</span>
                       </div>
-                      <div className="mono mt-1 text-[11px] text-mute">
-                        affected requests: {d.incidents.length ? d.incidents.join(", ") : "none"}
+                      <div className="mt-1 text-xs text-mute">
+                        {d.incidents.length ? `${d.incidents.length} requests affected` : "No requests affected"}
                         {d.holds.length ? ` · loaded units re-sheltered: ${d.holds.join(", ")}` : ""}
                       </div>
                     </li>

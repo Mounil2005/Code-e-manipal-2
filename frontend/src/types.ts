@@ -397,6 +397,8 @@ export interface LiveCwc {
   reason?: string;
   stale?: boolean;
   source?: string;
+  /** static set-up of the map's gauge: which flood the drill replays and the ramp's 0..1 range */
+  station?: { code: string; name: string; river: string; base_m: number; peak_m: number; record: string };
   gauge?: { code: string; name: string; river: string; level_m: number | null; time: string | null; history: [string, number][]; rain_mm_24h: number; ramp: number | null } | null;
   dams?: { code: string; name: string; outflow_m3s: number | null; inflow_m3s: number | null; level_m: number | null; time: string | null; outflow_history: [string, number][] }[];
 }

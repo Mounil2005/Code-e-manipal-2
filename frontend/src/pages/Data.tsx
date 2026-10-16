@@ -4,7 +4,7 @@ import { ArrowRight, Check, Satellite } from "lucide-react";
 import { api } from "../lib/api";
 import { useSim } from "../store/sim";
 import { CityMap } from "../components/CityMap";
-import { Badge, Button, cx, Panel } from "../components/ui";
+import { Badge, Button, cx, PageHeader, Panel } from "../components/ui";
 
 /** Data & evidence: which datasets, how and how often we get them, where they are used, why, and
  * what they changed; the Sentinel-1 check of the flood model; and the policy Pareto front. */
@@ -51,39 +51,42 @@ export default function Data() {
   const balanced = points.find((p) => p.name === "balanced");
 
   return (
-    <div className="space-y-4 p-4">
-      <section className="rounded-2xl bg-slate-950 p-6 text-white">
-        <p className="mono text-xs uppercase tracking-[0.25em] text-cyan-300">data &amp; evidence</p>
-        <h1 className="my-2 text-3xl font-semibold tracking-tight">What data we use, why, and what it changed</h1>
-        <p className="max-w-4xl text-slate-300">
-          Each source below says how we get it, how often, where in the product it is used, why we chose it and what difference it made, with its limits. The flood model is checked against what a satellite actually saw.
-        </p>
-      </section>
+    <div className="space-y-5 p-5">
+      <PageHeader eyebrow="data" title="Data and evidence" sub="Where each number comes from, how often it updates, what it changed, and how the flood model was checked against a satellite." />
+      <nav className="flex flex-wrap gap-2 text-sm" aria-label="On this page">
+        {[
+          ["#sources", "Sources"],
+          ["#s1", "Satellite check"],
+          ["#pareto", "Why this policy"],
+        ].map(([href, label]) => (
+          <a key={href} href={href} className="rounded-full border border-line-2 bg-white px-3.5 py-1.5 text-ink-2 hover:border-ink/30 hover:text-ink">
+            {label}
+          </a>
+        ))}
+      </nav>
 
       {/* how data flows */}
       <Panel title="How data reaches a decision">
-        <div className="flex flex-wrap items-center gap-2 p-4 text-[13px]">
+        <ol className="grid gap-px bg-line md:grid-cols-5">
           {[
-            ["Sources", "CWC gauges (hourly) · 2018 record · synthetic flood · SOS / field reports"],
-            ["One feed door", "POST /feed: timestamped, source-labelled messages"],
-            ["Engine events", "river level, new SOS, duplicates, contradictions, closures, camp updates"],
-            ["Agents re-negotiate", "bids priced on time, risk, urgency, fairness; safety shield checks each commit"],
-            ["What you see", "priority board, re-planned routes, camps, supplies, decision records"],
-          ].map(([t, d], i, all) => (
-            <div key={t} className="flex items-center gap-2">
-              <div className="rounded-xl border border-line bg-wash px-3 py-2">
-                <div className="font-semibold">{t}</div>
-                <div className="text-[11.5px] text-mute">{d}</div>
-              </div>
-              {i < all.length - 1 && <ArrowRight className="size-4 text-faint" />}
-            </div>
+            ["Sources", "River gauges (hourly), the 2018 record, SOS calls and field reports"],
+            ["One feed", "Every message is timestamped and labelled with its source"],
+            ["Engine events", "River level, new SOS, duplicates, contradictions, closures, camp updates"],
+            ["Agents re-plan", "Units bid on time, risk, urgency and fairness; the safety shield checks each commitment"],
+            ["What you see", "Priority board, new routes, camps, supplies and decision records"],
+          ].map(([t, d], i) => (
+            <li key={t} className="bg-white p-4">
+              <div className="mb-2 grid size-6 place-items-center rounded-full bg-ink text-xs font-semibold text-white">{i + 1}</div>
+              <div className="text-sm font-semibold">{t}</div>
+              <div className="mt-1 text-xs leading-relaxed text-mute">{d}</div>
+            </li>
           ))}
-        </div>
+        </ol>
       </Panel>
 
       {/* judge feedback */}
       {ev && (
-        <Panel title="Questions from the last review, and where they are answered">
+        <Panel title="Questions we have been asked, and where they are answered">
           <ul className="divide-y divide-line">
             {ev.feedback.map((f) => (
               <li key={f.asked} className="grid gap-1 px-4 py-2.5 text-sm md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] md:gap-4">
@@ -102,8 +105,9 @@ export default function Data() {
       )}
 
       {/* datasets */}
+      <div id="sources" />
       {ev && (
-        <Panel title="Datasets" sub="Click a source for how, how often, where, why and what it changed">
+        <Panel title="Data sources" sub="Select a source to see how we get it, why, and what it changed">
           <div className="divide-y divide-line">
             {ev.datasets.map((d) => (
               <div key={d.key} id={d.key}>
@@ -141,7 +145,7 @@ export default function Data() {
 
       {/* satellite check */}
       <div id="s1" className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <Panel title="Satellite check · Sentinel-1, 21 Aug 2018" right={<Satellite className="size-4 text-mute" />} bodyClass="p-0">
+        <Panel title="Satellite check · 21 Aug 2018" right={<Satellite className="size-4 text-mute" />} bodyClass="p-0">
           {ev?.s1 && world?.map.real && ev.model_frame ? (
             <div className="relative h-[520px] overflow-hidden rounded-b-[14px]">
               <CityMap world={world} frame={ev.model_frame} observed={{ runs: ev.s1.runs, row_km: ev.s1.row_km }} layers={{ routes: false, units: false, incidents: false }} />
@@ -158,9 +162,12 @@ export default function Data() {
             <p className="p-4 text-sm text-mute">{world?.map.real ? "Loading…" : "Open a Kerala map (New run → Map) to see the satellite check."}</p>
           )}
         </Panel>
-        <Panel title="How it was checked">
+        <Panel title="Did the model get it right?">
           {ev?.s1 ? (
             <div className="space-y-3 p-4 text-[13.5px] leading-relaxed text-ink-2">
+              <p className="rounded-xl bg-info-soft/60 p-3 text-[15px] text-ink">
+                The model flagged <b>{Math.round(ev.s1.validation.confusion.recall * 100)}%</b> of the junctions the satellite saw under water, and <b>{Math.round(ev.s1.validation.confusion.precision * 100)}%</b> of the junctions it flagged were really flooded.
+              </p>
               <p>
                 <b>Data.</b> {ev.s1.source}. {ev.s1.method}. Observed new water: <b>{ev.s1.flooded_km2} km²</b>.
               </p>
@@ -173,7 +180,7 @@ export default function Data() {
               <div className="grid grid-cols-4 gap-2 text-center">
                 {(
                   [
-                    ["ranking AUC", f2(ev.s1.validation.auc_inverse_elevation)],
+                    ["ranking score (AUC)", f2(ev.s1.validation.auc_inverse_elevation)],
                     ["precision", f2(ev.s1.validation.confusion.precision)],
                     ["recall", f2(ev.s1.validation.confusion.recall)],
                     ["F1", f2(ev.s1.validation.confusion.f1)],
@@ -196,20 +203,20 @@ export default function Data() {
       </div>
 
       {/* pareto */}
-      <Panel title="Why this dispatch policy · Pareto front" sub="Every policy run on the same Kerala 2018 flood and seeds; a policy is on the front if no other is faster, fairer and leaves fewer people waiting at once" right={<Button size="sm" variant="solid" loading={job?.status === "running"} onClick={runPareto}>{job ? "Run again" : "Run the policy sweep (~20 s)"}</Button>}>
+      <Panel title="Why the balanced policy?" sub="We ran 13 dispatch policies on the same flood. A policy is on the front if no other is faster, fairer and leaves fewer people waiting all at once." right={<Button size="sm" variant="solid" loading={job?.status === "running"} onClick={runPareto}>{job ? "Run again" : "Run the policy sweep (~20 s)"}</Button>}>
         <div id="pareto" className="grid gap-4 p-4 lg:grid-cols-[1.4fr_1fr]">
           {points.length ? (
             <>
               <ParetoChart points={points} />
               <div className="text-[13px]">
-                <div className="label mb-1.5">on the front</div>
+                <div className="label mb-1.5">Best trade-offs</div>
                 <table className="w-full">
                   <thead className="text-left text-[11px] text-mute">
                     <tr>
-                      <th className="py-1">policy</th>
-                      <th>time</th>
-                      <th>fair</th>
-                      <th>unmet</th>
+                      <th className="py-1">Policy</th>
+                      <th>Wait (min)</th>
+                      <th>Fairness</th>
+                      <th>Waiting</th>
                     </tr>
                   </thead>
                   <tbody className="mono text-[12px]">

@@ -76,7 +76,7 @@ const CHAPTERS: Chapter[] = [
     narrate: ({ frame }) => (
       <>
         <b>{frame.metrics.people_rescued}</b> people rescued, <b>{frame.metrics.unmet_people}</b> still waiting, mean time to service <b>{frame.metrics.mean_time_to_service ?? "—"} min</b>, {frame.metrics.deadline_misses} urgent deadlines missed and <b>{frame.metrics.route_violations + frame.metrics.invariant_violations}</b> safety violations ({frame.metrics.safety_rejections} unsafe commits blocked by the shield).{" "}
-        Now see it run on a real-time feed in <Link className="font-semibold underline" to="/live">Live ops</Link>, try a different future in the <Link className="underline" to="/decision-lab">Decision Lab</Link>, or read <Link className="underline" to="/data">what data we used and why</Link>.
+        Now see it run on a real-time feed in <Link className="font-semibold underline" to="/live">Live ops</Link>, or read <Link className="underline" to="/data">what data we used and why</Link>.
       </>
     ),
   },
@@ -168,95 +168,97 @@ export default function Judge() {
   const ctx: Ctx | null = world && frame ? { frame, world, rain, effects: lastEvent?.type === "TRIPLE_FAILURE" ? lastEvent.effects : [] } : null;
   const active = onStory ? chapter : -1;
 
+  const mainLabel = working ? "Running the live engine…" : active === -1 ? "Start the story" : active >= CHAPTERS.length - 1 ? "Story complete" : CHAPTERS[next].cta;
+  const stats: [string, React.ReactNode][] = frame
+    ? [
+        ["Rescued", frame.metrics.people_rescued],
+        ["Still waiting", frame.metrics.unmet_people],
+        ["Active missions", frame.assignments.filter((a) => a.status === "COMMITTED" || a.status === "LOADED").length],
+      ]
+    : [];
+
   return (
-    <div className="space-y-4 p-4">
-      <section className="rounded-2xl bg-slate-950 p-6 text-white">
-        <p className="mono text-xs uppercase tracking-[0.25em] text-cyan-300">resqnet · live demonstration · real data</p>
-        <h1 className="my-2 text-3xl font-semibold tracking-tight">Kerala, August 2018: when the rescue plan breaks, who keeps coordinating?</h1>
-        <p className="max-w-4xl text-slate-300">
-          Real OpenStreetMap roads and bridges of Aluva, real terrain, the real river discharge and rainfall of the 2018 flood, replayed in 180 minutes. The rescuers, calls for help and decisions are simulated live; nothing is pre-recorded.
-        </p>
-      </section>
-
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
-        {/* chapters */}
-        <ol className="panel space-y-1 p-2" aria-label="Story chapters">
-          {CHAPTERS.map((c, k) => {
-            const done = active >= k;
-            const isNext = (active === -1 && k === 0) || k === active + 1;
-            return (
-              <li key={k}>
-                <button
-                  disabled={working || (!isNext && !done) || (k > 0 && !onStory)}
-                  onClick={() => run(k)}
-                  className={cx("flex w-full items-start gap-3 rounded-xl p-3 text-left transition", isNext ? "bg-ink text-white" : done ? "hover:bg-black/[0.04]" : "opacity-50")}
-                >
-                  <span className={cx("mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold", done ? "bg-ok text-white" : isNext ? "bg-white text-ink" : "bg-black/[0.06]")}>{done ? <Check className="size-3.5" /> : k + 1}</span>
-                  <span className="min-w-0">
-                    <span className={cx("mono block text-[10.5px] uppercase tracking-wide", isNext ? "text-cyan-300" : "text-mute")}>{c.when}</span>
-                    <span className="block text-[14.5px] font-medium leading-snug">{c.title}</span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-          <div className="flex gap-2 p-2 pt-3">
-            <Button variant="solid" className="flex-1" loading={working} icon={working ? undefined : active === -1 ? <Play className="size-4" /> : <ChevronRight className="size-4" />} disabled={working || (active >= CHAPTERS.length - 1 && onStory)} onClick={() => run(active === -1 ? 0 : next)}>
-              {working ? "Running the live engine…" : active === -1 ? "Start the story" : active >= CHAPTERS.length - 1 ? "Story complete" : CHAPTERS[next].cta}
+    <div className="space-y-5 p-5">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[-0.02em]">Kerala, August 2018</h1>
+          <p className="mt-1 max-w-2xl text-sm text-mute">When the rescue plan breaks, who keeps coordinating? Real roads, terrain and river data; rescuers and calls for help are simulated live.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {active >= 0 && (
+            <Button variant="ghost" icon={<RotateCcw className="size-4" />} disabled={working} onClick={() => run(0)} title="Restart from 14 Aug">
+              Restart
             </Button>
-            {active >= 0 && (
-              <Button variant="ghost" icon={<RotateCcw className="size-4" />} disabled={working} onClick={() => run(0)} title="Restart from 14 Aug">
-                Restart
-              </Button>
-            )}
-          </div>
-        </ol>
-
-        {/* map + narrative */}
-        <div className="space-y-3">
-          {active >= 0 && ctx ? (
-            <div className="panel p-4" role="status" aria-live="polite">
-              <div className="mono text-[11px] uppercase tracking-wide text-info">
-                Chapter {active + 1} · {CHAPTERS[active].when}
-              </div>
-              <div className="mt-0.5 text-lg font-semibold tracking-tight">{CHAPTERS[active].title}</div>
-              <p className="mt-1.5 max-w-4xl text-[14.5px] leading-relaxed text-ink-2">{CHAPTERS[active].narrate(ctx)}</p>
-            </div>
-          ) : (
-            <div className="panel p-4 text-sm text-mute">Press <b className="text-ink">Start the story</b>. Each chapter runs the actual simulation and the camera follows what happens.</div>
           )}
-          {error && <p className="rounded-xl border border-crit/25 bg-crit-soft p-3 text-sm text-crit">{error}</p>}
-          {world && frame && (
-            <>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                {(
-                  [
-                    ["Real time", frame.flood_real_time ? new Date(frame.flood_real_time).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : `minute ${frame.tick}`],
-                    ["People rescued", frame.metrics.people_rescued],
-                    ["Still waiting", frame.metrics.unmet_people],
-                    ["Active assignments", frame.assignments.filter((a) => a.status === "COMMITTED" || a.status === "LOADED").length],
-                  ] as [string, React.ReactNode][]
-                ).map(([label, value]) => (
-                  <div key={label} className="panel p-3">
-                    <div className="label">{label}</div>
-                    <div className="mt-1 text-xl font-semibold tracking-tight">{value}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="panel relative h-[60vh] min-h-[360px] overflow-hidden">
-                <CityMap world={world} frame={frame} focus={focus} transitionMs={Math.max(80, 1000 / (sim?.speed || 1))} />
-                <RiverCard />
-                <div className="absolute bottom-3 left-3 z-10 rounded-xl border border-line bg-white/90 px-3 py-1.5 backdrop-blur">
-                  <MapLegend />
-                </div>
-              </div>
-            </>
-          )}
+          <Button variant="solid" loading={working} icon={working ? undefined : active === -1 ? <Play className="size-4" /> : <ChevronRight className="size-4" />} disabled={working || (active >= CHAPTERS.length - 1 && onStory)} onClick={() => run(active === -1 ? 0 : next)}>
+            {mainLabel}
+          </Button>
         </div>
       </div>
 
+      {/* story progress */}
+      <ol className="panel grid grid-cols-5 gap-1 p-1.5" aria-label="Story chapters">
+        {CHAPTERS.map((c, k) => {
+          const done = active >= k;
+          const isNext = (active === -1 && k === 0) || k === active + 1;
+          const current = active === k;
+          return (
+            <li key={k}>
+              <button
+                disabled={working || (!isNext && !done) || (k > 0 && !onStory)}
+                onClick={() => run(k)}
+                aria-current={current ? "step" : undefined}
+                className={cx("flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition", current ? "bg-ink text-white" : isNext ? "bg-info-soft/60 hover:bg-info-soft" : done ? "hover:bg-black/[0.04]" : "text-mute")}
+              >
+                <span className={cx("flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold", done && !current ? "bg-ok text-white" : current ? "bg-white text-ink" : "bg-black/[0.07]")}>{done && !current ? <Check className="size-3.5" /> : k + 1}</span>
+                <span className="hidden min-w-0 truncate text-sm font-medium md:block">{c.title}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      {error && <p className="rounded-xl border border-crit/25 bg-crit-soft p-3 text-sm text-crit">{error}</p>}
+
+      {/* what is happening now */}
+      {active >= 0 && ctx ? (
+        <div className="panel p-5" role="status" aria-live="polite">
+          <div className="text-xs font-medium text-info">
+            Chapter {active + 1} of {CHAPTERS.length} · {CHAPTERS[active].when}
+          </div>
+          <div className="mt-1 text-xl font-semibold tracking-tight">{CHAPTERS[active].title}</div>
+          <p className="mt-2 max-w-4xl text-[15px] leading-relaxed text-ink-2">{CHAPTERS[active].narrate(ctx)}</p>
+        </div>
+      ) : (
+        <div className="panel p-5 text-sm text-mute">
+          Press <b className="text-ink">Start the story</b>. Each chapter runs the real simulation and the camera follows what happens.
+        </div>
+      )}
+
+      {world && frame && (
+        <div className="panel relative h-[64vh] min-h-[400px] overflow-hidden">
+          <CityMap world={world} frame={frame} focus={focus} transitionMs={Math.max(80, 1000 / (sim?.speed || 1))} />
+          <RiverCard />
+          <div className="absolute top-3 left-3 z-10 flex gap-px overflow-hidden rounded-xl border border-line bg-white/95 shadow-sm backdrop-blur">
+            {stats.map(([label, value]) => (
+              <div key={label} className="px-3.5 py-2">
+                <div className="text-xs text-mute">{label}</div>
+                <div className="num text-lg leading-tight font-semibold">{value}</div>
+              </div>
+            ))}
+            <div className="border-l border-line px-3.5 py-2">
+              <div className="text-xs text-mute">Time</div>
+              <div className="text-sm leading-tight font-semibold">{frame.flood_real_time ? new Date(frame.flood_real_time).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : `minute ${frame.tick}`}</div>
+            </div>
+          </div>
+          <div className="absolute bottom-3 left-3 z-10 rounded-xl border border-line bg-white/90 px-3 py-1.5 backdrop-blur">
+            <MapLegend />
+          </div>
+        </div>
+      )}
+
       <details className="panel p-4">
-        <summary className="cursor-pointer text-sm font-medium">More experiments</summary>
+        <summary className="cursor-pointer text-sm font-medium">More experiments and data sources</summary>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
           <Button size="sm" disabled={working} onClick={() => createSim("coordinator_outage", "decentralized", { seed: 7 })}>
             Coordinator outage (t=15 to 75)
@@ -264,12 +266,6 @@ export default function Judge() {
           <Button size="sm" disabled={working} onClick={() => createSim("bridge_dependency", "decentralized", { seed: 7 })}>
             Across the river
           </Button>
-          <Link className="underline" to="/arena">
-            Measure all strategies in the Arena
-          </Link>
-          <Link className="underline" to="/decision-lab">
-            Compare a what-if future
-          </Link>
         </div>
         <p className="mt-3 text-xs text-mute">
           Outage assumption: central and greedy dispatch have no standby coordinator; peer communication and local safety stay available. Real data: OpenStreetMap, Copernicus DEM GLO-30, GloFAS discharge, IMD rainfall, WorldPop. Inundation depths come from the simulator's threshold model; see docs/flood_validation.md.

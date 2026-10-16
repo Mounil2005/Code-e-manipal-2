@@ -57,7 +57,33 @@ AREAS: dict[str, dict] = {
         "target_land": 72,
         "note": "Chengannur and the Pamba/Achankovil basin were among the worst-hit areas in the August 2018 floods.",
     },
+    "mahanadi_delta": {
+        "id": "odisha_mahanadi_delta",
+        "name": "Niali–Kantapara · Kathajodi & Devi",
+        "region": "Cuttack district, Odisha, India (Mahanadi delta)",
+        "bbox": (20.205, 85.985, 20.305, 86.095),
+        "target_land": 80,
+        "osdma": True,
+        "note": "Delta villages on the Kathajodi and Devi, Mahanadi branches that split off at the Naraj gauge; OSDMA has built flood shelters here because these blocks go under almost every big Mahanadi flood.",
+    },
 }
+# OSDMA's shelter register (osdma.org/shelter-locations), saved as committed JSON
+OSDMA_SHELTERS = ROOT / "backend" / "app" / "data" / "sources" / "osdma_shelters.json"
+OSDMA_KIND = {"MFS": "flood shelter", "MCS": "cyclone shelter", "NCRMP": "cyclone shelter", "IRCS": "cyclone shelter (Red Cross)"}
+
+
+def osdma_pois(bbox) -> list[dict]:
+    s, w, n, e = bbox
+    out = []
+    for r in json.loads(OSDMA_SHELTERS.read_text(encoding="utf-8")):
+        if s <= r["lat"] <= n and w <= r["lon"] <= e:
+            kind = next((v for k, v in OSDMA_KIND.items() if r["shelter"].upper().startswith(k)), "flood shelter")
+            out.append({"lat": r["lat"], "lon": r["lon"], "tags": {"amenity": "shelter", "operator": "OSDMA", "name": f"{r['name'].title()} {kind}", "village": r["name"].title(), "osdma_type": r["shelter"]}})
+    return out
+
+
+def area_map_id(area_id: str) -> str:
+    return AREAS[area_id].get("id", f"kerala_{area_id}")
 
 HIGHWAY_RANK = {
     "motorway": 0, "motorway_link": 0, "trunk": 1, "trunk_link": 1, "primary": 2, "primary_link": 2,
@@ -67,7 +93,10 @@ HIGHWAY_RANK = {
 # ground-unit speed multiplier by OSM highway class (national highway vs village lane)
 SPEED_BY_RANK = {0: 1.4, 1: 1.4, 2: 1.25, 3: 1.1, 4: 1.0, 5: 0.85, 6: 0.75, 7: 0.6}
 # indicative relief-camp capacity by facility type (people); scenarios override S1-S3
-SHELTER_CAPACITY = {"school": 60, "college": 80, "university": 80, "community_centre": 50, "townhall": 50, "place_of_worship": 40, "hospital": 30, "social_facility": 30, "marketplace": 40, "relief_camp": 40}
+SHELTER_CAPACITY = {"school": 60, "college": 80, "university": 80, "community_centre": 50, "townhall": 50, "place_of_worship": 40, "hospital": 30, "social_facility": 30, "marketplace": 40, "relief_camp": 40, "flood_shelter": 80}
+# Odisha's multipurpose cyclone/flood shelters (OSDMA) are mapped in OSM as amenity=shelter with a
+# name saying so; a bus stop or a hut is also amenity=shelter, so the name decides
+DISASTER_SHELTER = ("cyclone", "flood", "mcs", "multipurpose", "multi purpose", "relief")
 EXTRA_SHELTERS = 3  # S4..S6 beyond the three that scenarios configure
 SHELTER_AMENITIES = {"school", "college", "university", "community_centre", "townhall", "hospital", "place_of_worship", "social_facility", "marketplace"}
 PLACE_RANK = {"town": 4, "suburb": 3, "neighbourhood": 3, "quarter": 3, "village": 2, "hamlet": 1, "locality": 1, "city_block": 1}
@@ -139,7 +168,7 @@ def fetch_overpass(bbox) -> dict:
     q_net = f'[out:json][timeout:240];(way["highway"~"^({hw})$"]{bb};way["waterway"~"^(river|canal)$"]{bb};);out geom;'
     q_poi = (
         f'[out:json][timeout:120];(nwr["amenity"~"^({"|".join(SHELTER_AMENITIES | {"fire_station", "police"})})$"]["name"]{bb};'
-        f'node["place"]{bb};);out center;'
+        f'nwr["amenity"="shelter"]["name"]{bb};node["place"]{bb};);out center;'
     )
     q_bld = f'[out:csv(::lat,::lon;false;"\t")][timeout:240];way["building"]{bb};out center;'
     print("downloading network ...", flush=True)
@@ -656,6 +685,9 @@ def build(area_id: str, via: str, with_elevation: bool = True) -> dict:
 
     # ---- neighbourhoods from OSM place nodes
     places = []
+    # rural OSM often has few place nodes; each OSDMA shelter is named after its village
+    for p in osdma_pois(bbox) if area.get("osdma") else []:
+        places.append((PLACE_RANK["village"], 0, p["tags"]["village"], (p["lat"], p["lon"])))
     for p in raw["pois"]:
         pl = p["tags"].get("place")
         if pl in PLACE_RANK and p["tags"].get("name") and in_box(p["lat"], p["lon"]):
@@ -780,16 +812,24 @@ def build(area_id: str, via: str, with_elevation: bool = True) -> dict:
         nearest_river = lambda i: ""  # noqa: E731
     ltree2 = cKDTree(np.array([proj.xy(*p) for p in land.values()]))
     lkeys2 = list(land)
+    official_pois = osdma_pois(bbox) if area.get("osdma") else []
+    shelter_pois = official_pois + raw["pois"]
+    if official_pois:
+        print(f"OSDMA shelters in the area: {len(official_pois)}")
     cands = []
-    for p in raw["pois"]:
+    for p in shelter_pois:
         am = p["tags"].get("amenity")
-        if am in SHELTER_AMENITIES and p["tags"].get("name") and in_box(p["lat"], p["lon"]):
+        if am == "shelter" and any(k in (p["tags"].get("name") or "").lower() for k in DISASTER_SHELTER):
+            am = "flood_shelter"
+        if am in SHELTER_AMENITIES | {"flood_shelter"} and p["tags"].get("name") and in_box(p["lat"], p["lon"]):
             d, j = ltree2.query(proj.xy(p["lat"], p["lon"]))
             node = lkeys2[j]
             rd = dist_to_river(node)
-            if d <= 0.7 and model_elev[node] >= el_cut and rd <= 1.4:
-                pri = {"school": 3, "community_centre": 3, "college": 2, "university": 2, "townhall": 2, "hospital": 1, "place_of_worship": 1, "social_facility": 1, "marketplace": 0}[am]
-                cands.append({"node": node, "name": p["tags"]["name"], "amenity": am, "pri": pri, "pop": pop[node]})
+            # purpose-built shelters stand on raised plinths, so low ground does not rule them out
+            official = p["tags"].get("operator") == "OSDMA"
+            if (official and d <= 1.2) or (d <= 0.7 and model_elev[node] >= el_cut and rd <= 1.4):
+                pri = {"flood_shelter": 5 if official else 4, "school": 3, "community_centre": 3, "college": 2, "university": 2, "townhall": 2, "hospital": 1, "place_of_worship": 1, "social_facility": 1, "marketplace": 0}[am]
+                cands.append({"node": node, "name": p["tags"]["name"], "amenity": am, "pri": pri, "pop": pop[node], "official": official, "lat": p["lat"], "lon": p["lon"]})
     seen = set()
     cands = [c for c in sorted(cands, key=lambda c: (-c["pri"], -c["pop"], c["name"])) if not (c["node"] in seen or seen.add(c["node"]))]
     main_bank = bank_of[max(land, key=lambda i: pop[i])]
@@ -819,13 +859,17 @@ def build(area_id: str, via: str, with_elevation: bool = True) -> dict:
         shelters_sel.append({"node": far, "name": f"Relief camp near {node_nb[far]}", "amenity": "relief_camp", "pri": 0, "pop": pop[far]})
     # additional relief camps (S4..): same rules, anywhere in the area
     pool = [c for c in cands if c["node"] not in {x["node"] for x in shelters_sel}]
-    for _ in range(EXTRA_SHELTERS):
+    for _ in range(EXTRA_SHELTERS + (2 if official_pois else 0)):
         c = pick(pool, shelters_sel)
         if not c:
             break
         shelters_sel.append(c)
         pool.remove(c)
-    shelter_out = [{"id": f"S{i + 1}", "node": c["node"], "name": c["name"], "amenity": c["amenity"], "capacity": SHELTER_CAPACITY.get(c["amenity"], 40)} for i, c in enumerate(shelters_sel)]
+    shelter_out = [
+        {"id": f"S{i + 1}", "node": c["node"], "name": c["name"], "amenity": c["amenity"], "capacity": SHELTER_CAPACITY.get(c["amenity"], 40)}
+        | ({"source": "OSDMA", "lat": round(c["lat"], 5), "lng": round(c["lon"], 5)} if c.get("official") else {})
+        for i, c in enumerate(shelters_sel)
+    ]
     shelter_nodes = {c["node"] for c in shelters_sel}
     if river_nodes:
         linked = {l for l, _ in jetties}
@@ -974,7 +1018,7 @@ def build(area_id: str, via: str, with_elevation: bool = True) -> dict:
         nodes_out.append({"id": i, "lat": round(la, 5), "lng": round(lo, 5), "elev": 0.0, "elev_msl": round(emsl[i], 1), "hand": 0.0, "nb": node_nb[i], "kind": "river", "label": "River channel", "pop": 0})
 
     return {
-        "id": f"kerala_{area_id}",
+        "id": area_map_id(area_id),
         "name": area["name"],
         "region": area["region"],
         "note": area["note"],
@@ -989,7 +1033,8 @@ def build(area_id: str, via: str, with_elevation: bool = True) -> dict:
             "bridge_clearance": "lower approach elevation (DEM, model frame) + 0.6 m deck, clipped to 2.4-6.0",
             "road_speed": "ground-unit speed factor by OSM highway class (trunk 1.4 ... residential 0.75)",
             "shelter_capacity": "S1-S3 set by the scenario; S4+ indicative by facility type",
-        },
+        }
+        | ({"shelters": f"OSDMA shelter register (osdma.org/shelter-locations): {sum(1 for c in shelters_sel if c.get('official'))} of {len(shelters_sel)} camps; {len(official_pois)} OSDMA shelters in the area"} if official_pois else {}),
         "population_total": int(sum(pop.values())),
         "bbox": list(bbox),
         "origin": [proj.lat0, proj.lon0],
@@ -1020,7 +1065,7 @@ def main() -> None:
         return
     snap = build(a.area, a.via, not a.no_elevation)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / f"kerala_{a.area}.json"
+    out = OUT_DIR / f"{area_map_id(a.area)}.json"
     out.write_text(json.dumps(snap, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
     kinds = defaultdict(int)
     for e in snap["edges"]:

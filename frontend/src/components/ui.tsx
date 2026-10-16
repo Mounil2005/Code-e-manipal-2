@@ -8,9 +8,9 @@ export function Panel({ title, right, children, className, bodyClass, sub }: { t
   return (
     <section className={cx("panel flex min-h-0 flex-col", className)}>
       {(title || right) && (
-        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+        <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <div className="label truncate">{title}</div>
+            <div className="truncate text-[14px] font-semibold tracking-tight text-ink">{title}</div>
             {sub && <div className="mt-0.5 truncate text-xs text-mute">{sub}</div>}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">{right}</div>
@@ -54,7 +54,7 @@ const TONES: Record<string, string> = {
 };
 export function Badge({ tone = "neutral", children, className, dot }: { tone?: keyof typeof TONES | string; children: ReactNode; className?: string; dot?: boolean }) {
   return (
-    <span className={cx("mono inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-[1px] text-[10.5px] font-medium uppercase tracking-wide", TONES[tone] ?? TONES.neutral, className)}>
+    <span className={cx("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium", TONES[tone] ?? TONES.neutral, className)}>
       {dot && <span className="size-1.5 rounded-full bg-current" />}
       {children}
     </span>
@@ -101,7 +101,7 @@ export function Segmented<T extends string | number>({ value, options, onChange,
         <button
           key={String(o.value)}
           onClick={() => onChange(o.value)}
-          className={cx("rounded-full font-medium transition", size === "sm" ? "px-2.5 py-0.5 text-xs" : "px-3 py-1 text-sm", value === o.value ? "bg-ink text-white" : "text-ink-2 hover:bg-black/[0.04]")}
+          className={cx("rounded-full font-medium transition", size === "sm" ? "px-3 py-1 text-xs" : "px-3.5 py-1.5 text-sm", value === o.value ? "bg-ink text-white" : "text-ink-2 hover:bg-black/[0.04]")}
         >
           {o.label}
         </button>
@@ -146,14 +146,10 @@ export function KV({ k, v, mono = true }: { k: ReactNode; v: ReactNode; mono?: b
 
 export function PageHeader({ eyebrow, title, sub, right }: { eyebrow: string; title: ReactNode; sub?: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4 pb-4">
+    <div className="flex flex-wrap items-end justify-between gap-4 pb-2" data-section={eyebrow}>
       <div className="min-w-0">
-        <div className="mono mb-1.5 inline-flex items-center gap-1.5 rounded-full border border-line-2 bg-white px-2.5 py-0.5 text-[11px] text-ink-2">
-          <span className="size-1.5 rounded-full bg-info" />
-          {eyebrow}
-        </div>
-        <h1 className="font-display text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink">{title}</h1>
-        {sub && <p className="mt-1 max-w-3xl text-sm text-mute">{sub}</p>}
+        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[-0.02em] text-ink">{title}</h1>
+        {sub && <p className="mt-1 max-w-2xl text-sm text-mute">{sub}</p>}
       </div>
       {right && <div className="flex flex-wrap items-center gap-2">{right}</div>}
     </div>

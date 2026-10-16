@@ -5,7 +5,7 @@ import { RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import { useSim } from "../store/sim";
 import { SimControls } from "../components/Shell";
-import { Badge, Button, cx, Empty, inputCls, PageHeader, Panel, Spinner } from "../components/ui";
+import { Badge, Button, cx, Empty, inputCls, PageHeader, Panel, Segmented, Spinner } from "../components/ui";
 import type { Decision, Message, RoundSummary } from "../types";
 import { fmt } from "../lib/format";
 
@@ -43,6 +43,8 @@ export default function Agents() {
   const [onlyCommits, setOnlyCommits] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [policy, setPolicy] = useState<string>(sim?.config.policy ?? "balanced");
+  const [view, setView] = useState<"why" | "graph" | "messages">("why");
+  const [lower, setLower] = useState<"rescue" | "shelters" | "routes">("rescue");
 
   const refresh = () => {
     if (!sim) return;
@@ -66,15 +68,15 @@ export default function Agents() {
 
   if (!sim || !frame) return <Spinner />;
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-5 p-5">
       <SimControls />
       <PageHeader
-        eyebrow="agent negotiation lab"
-        title="Real bids, real rejections, one conflict-free commitment set"
-        sub="Every message below was produced by the engine. Incident agents publish requests; rescue agents bid on their own (possibly stale) view of the network; deferred acceptance resolves conflicts; shelter agents grant or refuse seats; the safety shield has the final word."
+        eyebrow="negotiation"
+        title="Negotiation"
+        sub="How rescue units bid for each request and how conflicts are resolved. Every message here was produced by the engine."
         right={
           <>
-            <select className={cx(inputCls, "h-8 w-40")} value={policy} onChange={(e) => { const v = e.target.value; inject("SET_POLICY", { policy: v }, `Policy → ${v}`).then((ok) => ok && setPolicy(v)); }}>
+            <select className="h-8 w-44 rounded-lg border border-line-2 bg-white px-2 text-sm outline-none focus:border-info" value={policy} onChange={(e) => { const v = e.target.value; inject("SET_POLICY", { policy: v }, `Policy → ${v}`).then((ok) => ok && setPolicy(v)); }}>
               {["balanced", "fastest", "urgency_first", "equity"].map((p) => (
                 <option key={p}>{p}</option>
               ))}
@@ -85,24 +87,23 @@ export default function Agents() {
           </>
         }
       />
-      <div className="grid gap-3 xl:grid-cols-[300px_1fr_420px]">
-        <Panel title="negotiation rounds" sub={`${list.length} rounds · ${frame.metrics.negotiation_messages} messages`} right={<label className="flex items-center gap-1 text-xs text-mute"><input type="checkbox" checked={onlyCommits} onChange={(e) => setOnlyCommits(e.target.checked)} />eventful</label>} className="h-[640px]">
+      <div className="grid gap-4 xl:grid-cols-[300px_1fr]">
+        <Panel title="Decision rounds" sub={`${list.length} rounds · ${frame.metrics.negotiation_messages} messages`} right={<label className="flex items-center gap-1.5 text-xs text-mute"><input type="checkbox" checked={onlyCommits} onChange={(e) => setOnlyCommits(e.target.checked)} />Only eventful</label>} className="h-[600px]">
           <div className="scroll-thin h-full overflow-y-auto">
             {shown.length === 0 ? (
               <Empty title="No rounds yet" body="Start or step the simulation." />
             ) : (
               shown.map((r) => (
-                <button key={r.id} onClick={() => setRid(r.id)} className={cx("block w-full border-b border-line/70 px-3 py-2 text-left hover:bg-wash", rid === r.id && "bg-info-soft/50")}>
-                  <div className="flex items-center gap-1.5">
-                    <span className="mono text-[12px] font-semibold">{r.id}</span>
-                    <span className="mono text-[10.5px] text-mute">t={r.tick}</span>
+                <button key={r.id} onClick={() => setRid(r.id)} className={cx("block w-full border-b border-line/70 px-4 py-3 text-left hover:bg-wash", rid === r.id && "bg-info-soft/50")}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Minute {r.tick}</span>
                     <span className="ml-auto flex gap-1">
-                      {r.commits.length > 0 && <Badge tone="ok">{r.commits.length} commit</Badge>}
-                      {r.rejections > 0 && <Badge tone="crit">{r.rejections} rej</Badge>}
+                      {r.commits.length > 0 && <Badge tone="ok">{r.commits.length} committed</Badge>}
+                      {r.rejections > 0 && <Badge tone="crit">{r.rejections} rejected</Badge>}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-mute">
-                    {r.trigger} · {r.message_count} msgs · {r.iterations} it · {fmt(r.duration_ms, 1)} ms
+                  <div className="mt-0.5 truncate text-xs text-mute">
+                    {r.id} · {r.trigger} · {r.message_count} messages
                   </div>
                 </button>
               ))
@@ -110,109 +111,165 @@ export default function Agents() {
           </div>
         </Panel>
 
-        <Panel title={detail ? `${detail.id} · message graph` : "message graph"} sub={detail ? `${detail.strategy} · ${detail.incidents.length} requests × ${detail.resources.length} agents` : undefined} className="h-[640px]">
+        <Panel
+          title={detail ? `Round ${detail.id}` : "Select a round"}
+          sub={detail ? `${detail.incidents.length} requests · ${detail.resources.length} units · ${detail.commits.length} commitments` : undefined}
+          right={<Segmented size="sm" value={view} onChange={setView} options={[{ value: "why", label: "Why" }, { value: "graph", label: "Graph" }, { value: "messages", label: "Messages" }]} />}
+          className="h-[600px]"
+        >
           {!detail ? (
-            <Spinner label="Select a round" />
-          ) : (
+            rid ? <Spinner label="Loading round…" /> : <Empty title="No decisions yet" body="Press Start (or step the run). Each decision appears here with the reason it was made." />
+          ) : view === "why" ? (
+            <div className="scroll-thin h-full space-y-3 overflow-y-auto p-4">
+              {detail.decisions.length === 0 && <Empty title="No decisions in this round" body="Nothing was matched. Try an eventful round." />}
+              {detail.decisions.map((d) => (
+                <div key={d.id} className="rounded-xl border border-line p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[15px] font-semibold">
+                      {d.selected ? `${d.selected.resource_id} → ${d.incident_id}` : d.incident_id}
+                    </span>
+                    <Badge tone={d.outcome === "COMMITTED" ? "ok" : d.outcome === "UNMATCHED" ? "neutral" : "crit"}>{d.outcome.toLowerCase().replace(/_/g, " ")}</Badge>
+                    <span className="text-xs text-mute">
+                      {d.incident.people} people · urgency {d.incident.urgency} · {d.incident.neighbourhood}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-2">{d.explanation}</p>
+                  {d.what_would_change && (
+                    <p className="mt-2 rounded-lg bg-wash px-3 py-2 text-xs leading-relaxed text-mute">
+                      <b className="text-ink-2">What would change this: </b>
+                      {d.what_would_change}
+                    </p>
+                  )}
+                  <div className="mt-3 flex items-center gap-3 text-xs text-mute">
+                    <span>{d.candidates.length} units bid</span>
+                    {d.rejections.length > 0 && <span>{d.rejections.length} ruled out</span>}
+                    <button className="ml-auto text-info hover:underline" onClick={() => openDecision(d.id)}>
+                      Open full decision record
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : view === "graph" ? (
             <div className="h-full">
               <ReactFlow nodes={graph.nodes} edges={graph.edges} fitView fitViewOptions={{ padding: 0.15 }} nodesDraggable proOptions={{ hideAttribution: true }} minZoom={0.3}>
                 <Background gap={18} color="#e7e7e4" />
               </ReactFlow>
             </div>
-          )}
-        </Panel>
-
-        <Panel title="what happened" sub={detail ? `${detail.messages.length} messages · ${detail.commits.length} commits` : undefined} className="h-[640px]" right={detail && <select className="mono rounded border border-line px-1 text-[11px]" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}><option value="all">all</option>{Object.keys(TYPE_STYLE).map((t) => <option key={t}>{t}</option>)}</select>}>
-          <div className="scroll-thin h-full overflow-y-auto">
-            {detail?.decisions?.length ? (
-              <div className="flex flex-wrap gap-1 border-b border-line p-2">
-                {detail.decisions.map((d) => (
-                  <button key={d.id} onClick={() => openDecision(d.id)} className="mono rounded-md border border-line px-1.5 py-0.5 text-[10.5px] hover:border-info">
-                    {d.incident_id}: <span className={d.outcome === "COMMITTED" ? "text-ok" : d.outcome === "UNMATCHED" ? "text-mute" : "text-crit"}>{d.outcome.toLowerCase()}</span>
-                  </button>
-                ))}
+          ) : (
+            <div className="scroll-thin h-full overflow-y-auto">
+              <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-white px-4 py-2 text-xs text-mute">
+                Show
+                <select className="rounded-lg border border-line px-2 py-1 text-xs" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+                  <option value="all">all message types</option>
+                  {Object.keys(TYPE_STYLE).map((t) => (
+                    <option key={t} value={t}>
+                      {t.replace(/_/g, " ").toLowerCase()}
+                    </option>
+                  ))}
+                </select>
+                <span className="ml-auto">{msgs.length} messages</span>
               </div>
-            ) : null}
-            <ol className="relative">
-              {msgs.map((m) => {
-                const st = TYPE_STYLE[m.type] ?? TYPE_STYLE.REQUEST;
-                return (
-                  <li key={m.seq} className="flex gap-2 border-b border-line/50 px-3 py-1.5">
-                    <span className="mono w-6 shrink-0 pt-0.5 text-right text-[10px] text-faint">{m.seq}</span>
-                    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: st.color }} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge tone={st.tone}>{m.type.replace(/_/g, " ").toLowerCase()}</Badge>
-                        <span className="mono text-[11.5px]">
-                          {m.from} <span className="text-faint">→</span> {m.to}
-                        </span>
-                      </div>
-                      {(m.reason || Object.keys(m.payload).length > 0) && (
-                        <div className="mono mt-0.5 text-[10.5px] leading-relaxed text-mute">
-                          {m.reason && <span className="text-ink-2">{m.reason} </span>}
-                          {Object.entries(m.payload)
-                            .filter(([k]) => k !== "reason")
-                            .map(([k, v]) => `${k}=${v}`)
-                            .join(" · ")}
+              <ol>
+                {msgs.map((m) => {
+                  const st = TYPE_STYLE[m.type] ?? TYPE_STYLE.REQUEST;
+                  return (
+                    <li key={m.seq} className="flex gap-3 border-b border-line/50 px-4 py-2">
+                      <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: st.color }} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone={st.tone}>{m.type.replace(/_/g, " ").toLowerCase()}</Badge>
+                          <span className="text-[13px]">
+                            {m.from} <span className="text-faint">→</span> {m.to}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
+                        {(m.reason || Object.keys(m.payload).length > 0) && (
+                          <div className="mt-0.5 text-xs leading-relaxed text-mute">
+                            {m.reason && <span className="text-ink-2">{m.reason} </span>}
+                            {Object.entries(m.payload)
+                              .filter(([k]) => k !== "reason")
+                              .map(([k, v]) => `${k}=${v}`)
+                              .join(" · ")}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          )}
         </Panel>
       </div>
 
       {agents && (
-        <div className="grid gap-3 lg:grid-cols-3">
-          <Panel title="rescue agents · local knowledge" sub={agents.resources[0]?.information}>
+        <Panel
+          title="Who is in the negotiation"
+          right={
+            <Segmented
+              size="sm"
+              value={lower}
+              onChange={setLower}
+              options={[
+                { value: "rescue", label: "Rescue units" },
+                { value: "shelters", label: "Camps" },
+                { value: "routes", label: "Routes" },
+              ]}
+            />
+          }
+        >
+          {lower === "rescue" && (
             <div className="divide-y divide-line">
               {agents.resources.map((r: any) => (
-                <div key={r.id} className="flex items-center gap-2 px-4 py-2 text-xs">
-                  <span className="mono w-8 font-semibold">{r.id}</span>
-                  <span className="text-mute">{r.bids_submitted} bids · {r.commits} commits</span>
+                <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
+                  <span className="w-10 font-semibold">{r.id}</span>
+                  <span className="text-mute">
+                    {r.bids_submitted} bids · {r.commits} commitments
+                  </span>
                   <span className="ml-auto flex gap-1">
-                    {r.belief_mismatch_edges.length > 0 && <Badge tone="warn" className="normal-case">{r.belief_mismatch_edges.length} stale edges</Badge>}
-                    {r.discovered_closures.length > 0 && <Badge tone="info">{r.discovered_closures.length} discovered</Badge>}
+                    {r.belief_mismatch_edges.length > 0 && <Badge tone="warn">{r.belief_mismatch_edges.length} outdated roads in its view</Badge>}
+                    {r.discovered_closures.length > 0 && <Badge tone="info">{r.discovered_closures.length} closures found</Badge>}
                     {r.blackout_until && <Badge tone="crit">no comms</Badge>}
                   </span>
                 </div>
               ))}
             </div>
-          </Panel>
-          <Panel title="shelter agents · capacity offers">
+          )}
+          {lower === "shelters" && (
             <div className="divide-y divide-line">
               {agents.shelters.map((s: any) => (
-                <div key={s.id} className="px-4 py-2 text-xs">
+                <div key={s.id} className="px-4 py-2.5 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className="mono font-semibold">{s.id}</span>
+                    <span className="font-semibold">{s.id}</span>
                     <span className="truncate text-mute">{s.name}</span>
-                    <Badge tone={s.free <= 0 ? "crit" : "ok"} className="ml-auto">{s.free} free</Badge>
+                    <Badge tone={s.free <= 0 ? "crit" : "ok"} className="ml-auto">
+                      {s.free} free
+                    </Badge>
                   </div>
-                  <div className="mono mt-0.5 text-[10.5px] text-mute">
+                  <div className="mt-0.5 text-xs text-mute">
                     {s.occupancy}/{s.capacity} occupied · {s.reserved} reserved · {s.accepts} accepted · {s.rejects} refused
                   </div>
                 </div>
               ))}
             </div>
-          </Panel>
-          <Panel title="route agent · network validity">
-            <div className="space-y-2 p-4 text-xs">
+          )}
+          {lower === "routes" && (
+            <div className="space-y-2 p-4 text-sm">
               <div>
-                <span className="text-mute">Closed for ground units: </span>
-                <span className="mono">{agents.route_agent.closed_for_ground.length} edges</span>
+                <span className="text-mute">Closed for ground teams: </span>
+                {agents.route_agent.closed_for_ground.length} roads
               </div>
               <div>
-                <span className="text-mute">Flooded roads navigable by boat: </span>
-                <span className="mono">{agents.route_agent.navigable_flooded_roads.length}</span>
+                <span className="text-mute">Flooded roads boats can use: </span>
+                {agents.route_agent.navigable_flooded_roads.length}
               </div>
               {agents.route_agent.bridges.map((b: any) => (
                 <div key={b.id} className="flex items-center gap-2">
-                  <span className="mono w-10">{b.id}</span>
+                  <span className="w-10 font-medium">{b.id}</span>
                   <span>{b.name}</span>
-                  <Badge tone={b.ground_ok ? "ok" : "crit"} className="ml-auto">{b.ground_ok ? "open" : "closed"}</Badge>
+                  <Badge tone={b.ground_ok ? "ok" : "crit"} className="ml-auto">
+                    {b.ground_ok ? "open" : "closed"}
+                  </Badge>
                 </div>
               ))}
               {agents.route_agent.manual_closures.map((c: any) => (
@@ -221,8 +278,8 @@ export default function Agents() {
                 </div>
               ))}
             </div>
-          </Panel>
-        </div>
+          )}
+        </Panel>
       )}
     </div>
   );

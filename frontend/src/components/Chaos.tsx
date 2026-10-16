@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Bomb, Construction, Radio, Ship, Tent, Waves, Zap } from "lucide-react";
 import { useSim } from "../store/sim";
 import { Button } from "./ui";
@@ -43,6 +44,24 @@ export function ChaosButtons({ layout = "row" }: { layout?: "row" | "grid" }) {
         }}>
           Contradict report
         </Button>
+      )}
+    </div>
+  );
+}
+
+/** Chaos buttons behind one menu, so the control bar stays calm. */
+export function ChaosMenu() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <Button size="sm" variant="danger" icon={<Bomb className="size-3.5" />} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        Inject failure
+      </Button>
+      {open && (
+        <div className="panel fade-in absolute right-0 z-40 mt-2 w-[340px] p-3">
+          <div className="mb-2 text-xs text-mute">Break something and watch the agents re-plan.</div>
+          <ChaosButtons layout="grid" />
+        </div>
       )}
     </div>
   );

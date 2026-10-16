@@ -22,20 +22,30 @@ from typing import Any, Optional
 BASE = "https://ffs.india-water.gov.in/iam/api"
 UA = "resqnet-research/0.1 (educational flood-rescue simulation)"
 
-# River gauge + upstream reservoirs per map. base_m / peak_m: the 2018 flood record at that gauge
-# (14 Aug 00:00 start and the highest reading), used to map a reading onto the simulator's river
-# ramp (0 = calm, 1 = the 2018 peak).
+# River gauge + upstream reservoirs per map. base_m / peak_m: the reference flood at that gauge
+# (the level before the rise and the highest reading), used to map a reading onto the simulator's
+# river ramp (0 = calm, 1 = that flood's peak). `drill` is the hourly record the Live page replays:
+# fetched between `fetch`, replayed between `window` (scripts/build_cwc_drill.py).
 STATIONS: dict[str, dict[str, Any]] = {
     "kerala_aluva": {
-        "gauge": {"code": "012-SWRDKOCHI", "name": "Neeleeswaram", "river": "Periyar", "base_m": 5.9, "peak_m": 12.4},
+        "gauge": {"code": "012-SWRDKOCHI", "name": "Neeleeswaram", "river": "Periyar", "base_m": 5.9, "peak_m": 12.4, "record": "Aug 2018"},
         "dams": [
             {"code": "0024-SWRDKOCHI", "name": "Idukki reservoir"},
             {"code": "0025-SWRDKOCHI", "name": "Idamalayar reservoir"},
         ],
+        "drill": {"year": 2018, "fetch": ("2018-08-13", "2018-08-21"), "window": ("2018-08-14T12:00", "2018-08-17T12:00")},
     },
     "kerala_chengannur": {
-        "gauge": {"code": "018-SWRDKOCHI", "name": "Malakkara", "river": "Pamba", "base_m": 4.9, "peak_m": 9.58},
+        "gauge": {"code": "018-SWRDKOCHI", "name": "Malakkara", "river": "Pamba", "base_m": 4.9, "peak_m": 9.58, "record": "Aug 2018"},
         "dams": [],
+        "drill": {"year": 2018, "fetch": ("2018-08-13", "2018-08-21"), "window": ("2018-08-14T12:00", "2018-08-17T12:00")},
+    },
+    # Naraj is the head of the Mahanadi delta and the gauge CWC forecasts the delta from; Hirakud
+    # is the dam upstream. Reference flood: August 2022 (23.0 m on 10 Aug, peak 27.49 m on 17 Aug).
+    "odisha_mahanadi_delta": {
+        "gauge": {"code": "036-MDBURLA", "name": "Naraj", "river": "Mahanadi", "base_m": 23.0, "peak_m": 27.49, "record": "Aug 2022"},
+        "dams": [{"code": "012-MDBURLA", "name": "Hirakud reservoir"}],
+        "drill": {"year": 2022, "fetch": ("2022-08-10", "2022-08-26"), "window": ("2022-08-13T00:00", "2022-08-19T00:00")},
     },
 }
 

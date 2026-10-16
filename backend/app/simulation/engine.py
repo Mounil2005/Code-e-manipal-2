@@ -739,8 +739,8 @@ class Engine:
         ev.effects.append("operator approves every dispatch; agents recommend" if on else "autonomous: agents commit dispatches themselves")
 
     def _ev_gauge_reading(self, ev: SimulationEvent, p: dict[str, Any]) -> None:
-        """A river gauge reading from the feed. Sets the river ramp (0 = calm, 1 = the 2018 peak at
-        that gauge) and recomputes depths and traversability immediately."""
+        """A river gauge reading from the feed. Sets the river ramp (0 = calm, 1 = the reference
+        flood's peak at that gauge) and recomputes depths and traversability immediately."""
         from ..live.cwc import ramp_for_level
 
         w = self.world
